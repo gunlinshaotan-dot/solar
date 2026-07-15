@@ -588,11 +588,18 @@ import * as THREE from 'three';
       return mobilePlaying || controls.isLocked;
     }
 
-    function fitAppViewport() {
+    function fitAppViewport(force) {
       const vv = window.visualViewport;
-      const w = Math.round(vv?.width || window.innerWidth);
-      const h = Math.round(vv?.height || window.innerHeight);
-      if (w === fitAppViewport._w && h === fitAppViewport._h) return;
+      // Prefer visualViewport; on Android rotate, briefly falls back to screen dims
+      let w = Math.round(vv?.width || window.innerWidth || document.documentElement.clientWidth || 1);
+      let h = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 1);
+      // After orientation flip some Android Chrome builds report swapped/stale values once
+      if (screen.orientation?.type) {
+        const landscape = screen.orientation.type.startsWith('landscape');
+        if (landscape && w < h) { const t = w; w = h; h = t; }
+        if (!landscape && h < w) { const t = w; w = h; h = t; }
+      }
+      if (!force && w === fitAppViewport._w && h === fitAppViewport._h) return;
       fitAppViewport._w = w;
       fitAppViewport._h = h;
       document.documentElement.style.setProperty('--app-w', `${w}px`);
@@ -609,6 +616,17 @@ import * as THREE from 'three';
     }
     fitAppViewport._w = 0;
     fitAppViewport._h = 0;
+
+    function scheduleFitViewport() {
+      fitAppViewport(true);
+      // Android: layout settles after rotate — refit a few times
+      clearTimeout(scheduleFitViewport._t1);
+      clearTimeout(scheduleFitViewport._t2);
+      clearTimeout(scheduleFitViewport._t3);
+      scheduleFitViewport._t1 = setTimeout(() => fitAppViewport(true), 50);
+      scheduleFitViewport._t2 = setTimeout(() => fitAppViewport(true), 180);
+      scheduleFitViewport._t3 = setTimeout(() => fitAppViewport(true), 400);
+    }
 
     async function requestAppFullscreen() {
       const el = document.documentElement;
@@ -635,10 +653,14 @@ import * as THREE from 'three';
       toggleHud();
     });
 
-    fitAppViewport();
-    window.addEventListener('resize', fitAppViewport);
-    window.visualViewport?.addEventListener('resize', fitAppViewport);
-    window.visualViewport?.addEventListener('scroll', fitAppViewport);
+    fitAppViewport(true);
+    window.addEventListener('resize', scheduleFitViewport);
+    window.addEventListener('orientationchange', scheduleFitViewport);
+    window.visualViewport?.addEventListener('resize', scheduleFitViewport);
+    window.visualViewport?.addEventListener('scroll', () => fitAppViewport(true));
+    screen.orientation?.addEventListener?.('change', scheduleFitViewport);
+    document.addEventListener('fullscreenchange', scheduleFitViewport);
+    window.addEventListener('pageshow', scheduleFitViewport);
 
     hint.addEventListener('click', startPlay);
     hint.querySelector('.cta')?.addEventListener('click', (e) => {
