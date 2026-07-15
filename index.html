@@ -8,10 +8,16 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#000000" />
   <meta name="screen-orientation" content="landscape" />
-  <meta name="description" content="Solar Nemesis — 3D полёт по Солнечной системе. Работает в браузере на ПК и Android." />
+  <meta name="description" content="Calamity Space — 3D полёт по Солнечной системе. Работает в браузере на ПК и Android." />
+  <meta name="apple-mobile-web-app-title" content="Calamity Space" />
   <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icon/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="icon/favicon-16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="icon/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon/icon-192.png" />
+  <link rel="preload" href="icon/calamity-logo.png" as="image" />
   <link rel="preload" href="sounds/engine-ambient.mp3" as="fetch" type="audio/mpeg" crossorigin="anonymous" />
-  <title>Solar Nemesis — 3D Solar System</title>
+  <title>Calamity Space</title>
   <script>
     // Base path for GitHub Pages (/solar/) and local server (/)
     (function () {
@@ -24,7 +30,7 @@
       document.write('<base href="' + window.__BASE__ + '">');
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=47" />
+  <link rel="stylesheet" href="css/style.css?v=48" />
   <script type="importmap">
   {
     "imports": {
@@ -181,10 +187,14 @@
     </div>
   </div>
 
-  <div id="loading">
-    <div class="box">
-      <h2>ЗАГРУЗКА КОСМОСА</h2>
-      <div class="bar"><div class="fill" id="load-fill"></div></div>
+  <div id="loading" aria-busy="true" aria-label="Загрузка Calamity Space">
+    <div class="splash">
+      <p class="splash-welcome">Добро пожаловать в Calamity Space</p>
+      <img class="splash-logo" src="icon/calamity-logo.png" alt="Calamity Space" width="512" height="512" decoding="async" />
+      <div class="splash-load">
+        <div class="bar"><div class="fill" id="load-fill"></div></div>
+        <p class="splash-status" id="load-status">Инициализация…</p>
+      </div>
     </div>
   </div>
 
@@ -209,7 +219,7 @@
     <div id="resume-tip" class="hidden" aria-hidden="true">Кликните, чтобы снова управлять мышью</div>
   </div>
 
-  <script type="module" src="js/game.js?v=47"></script>
+  <script type="module" src="js/game.js?v=48"></script>
   <script>
     (function () {
       var host = location.hostname;

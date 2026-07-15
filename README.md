@@ -1,4 +1,4 @@
-# Solar Nemesis
+# Calamity Space
 
 Интерактивная 3D Солнечная система (Three.js) — полёт из кабины корабля.
 

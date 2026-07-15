@@ -12,12 +12,18 @@ import * as THREE from 'three';
 
     // Browser + Three.js memory cache — assets stay hot after first load
     THREE.Cache.enabled = true;
-    const HTTP_CACHE = 'solar-nemesis-v47';
+    const HTTP_CACHE = 'solar-nemesis-v48';
     const LOCAL_ASSETS = [
       'index.html',
       'css/style.css',
       'js/game.js',
       'manifest.webmanifest',
+      'icon/calamity-logo.png',
+      'icon/icon-192.png',
+      'icon/icon-512.png',
+      'icon/apple-touch-icon.png',
+      'icon/favicon-32.png',
+      'icon/favicon-16.png',
       'sounds/engine-ambient.mp3',
       'sounds/warp.flac',
       'textures/sun.jpg',
@@ -172,7 +178,38 @@ import * as THREE from 'three';
     const infoName = document.getElementById('info-name');
     const infoDesc = document.getElementById('info-desc');
     const loadFill = document.getElementById('load-fill');
+    const loadStatus = document.getElementById('load-status');
     const loading = document.getElementById('loading');
+    const SPLASH_MIN_MS = 7000;
+    const splashT0 = performance.now();
+    let splashAssetP = 0;
+    let splashDone = false;
+
+    function setLoadProgress(p01, status) {
+      const pct = Math.round(THREE.MathUtils.clamp(p01, 0, 1) * 100);
+      if (loadFill) loadFill.style.width = `${pct}%`;
+      if (loadStatus && status) loadStatus.textContent = status;
+    }
+
+    function tickSplashBar() {
+      if (splashDone) return;
+      const timeP = Math.min(0.92, (performance.now() - splashT0) / SPLASH_MIN_MS);
+      setLoadProgress(Math.max(timeP, splashAssetP * 0.9));
+    }
+    const splashInterval = setInterval(tickSplashBar, 40);
+    setLoadProgress(0.02, 'Добро пожаловать…');
+
+    async function finishSplash(status = 'Готово') {
+      if (splashDone) return;
+      splashAssetP = 1;
+      setLoadProgress(1, status);
+      const left = SPLASH_MIN_MS - (performance.now() - splashT0);
+      if (left > 0) await new Promise((r) => setTimeout(r, left));
+      splashDone = true;
+      clearInterval(splashInterval);
+      setLoadProgress(1, status);
+      loading?.classList.add('done');
+    }
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000010);
@@ -3147,7 +3184,13 @@ import * as THREE from 'three';
     let loaded = 0;
     function bump() {
       loaded++;
-      loadFill.style.width = `${Math.round((loaded / needed.length) * 100)}%`;
+      splashAssetP = loaded / needed.length;
+      tickSplashBar();
+      if (loadStatus) {
+        loadStatus.textContent = loaded < needed.length
+          ? `Загрузка системы… ${loaded}/${needed.length}`
+          : 'Сборка сцены…';
+      }
     }
 
     async function loadAll() {
@@ -7121,8 +7164,10 @@ import * as THREE from 'three';
     beginWakeSequence();
 
     // Finish progress behind the wake lids: aft cabin + shader compile (no first-F frezes)
+    // Splash stays at least 7s with Calamity Space logo
     (async () => {
       try {
+        if (loadStatus) loadStatus.textContent = 'Подготовка корабля…';
         if (typeof ensureHabitation === 'function') {
           ensureHabitation({ keepSealed: true });
         }
@@ -7143,6 +7188,7 @@ import * as THREE from 'three';
             } catch (_) {}
           }
         }
+        if (loadStatus) loadStatus.textContent = 'Компиляция шейдеров…';
         if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
         else renderer.compile(scene, camera);
         composer.render();
@@ -7151,7 +7197,7 @@ import * as THREE from 'three';
       } catch (err) {
         console.warn('[Solar] GPU warm failed', err);
       } finally {
-        loading.classList.add('done');
+        await finishSplash('Приятного полёта');
       }
     })();
 

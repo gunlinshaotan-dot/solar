@@ -1,5 +1,5 @@
-/* Solar Nemesis — full asset cache (Pages + local) */
-const CACHE = 'solar-nemesis-v47';
+/* Calamity Space — full asset cache (Pages + local) */
+const CACHE = 'solar-nemesis-v48';
 const CDN_CACHE = 'solar-cdn-v4';
 
 const PRECACHE = [
@@ -8,6 +8,12 @@ const PRECACHE = [
   './css/style.css',
   './js/game.js',
   './manifest.webmanifest',
+  './icon/calamity-logo.png',
+  './icon/icon-192.png',
+  './icon/icon-512.png',
+  './icon/apple-touch-icon.png',
+  './icon/favicon-32.png',
+  './icon/favicon-16.png',
   './sounds/engine-ambient.mp3',
   './sounds/warp.flac',
   './textures/sun.jpg',
