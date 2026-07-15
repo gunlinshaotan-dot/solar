@@ -2,13 +2,15 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#000000" />
+  <meta name="screen-orientation" content="landscape" />
   <meta name="description" content="Solar Nemesis — 3D полёт по Солнечной системе. Работает в браузере на ПК и Android." />
   <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="preload" href="sounds/engine-ambient.mp3" as="fetch" type="audio/mpeg" crossorigin="anonymous" />
   <title>Solar Nemesis — 3D Solar System</title>
   <script>
     // Base path for GitHub Pages (/solar/) and local server (/)
@@ -33,7 +35,26 @@
   </script>
 </head>
 <body>
+  <div id="orient-gate" aria-hidden="true">
+    <div class="orient-card">
+      <div class="orient-phone" aria-hidden="true"></div>
+      <p class="orient-title">Поверните телефон</p>
+      <p class="orient-sub">Игра только в <b>горизонтальном</b> режиме · на весь экран</p>
+      <button type="button" id="orient-fs-btn" class="cta">На весь экран</button>
+    </div>
+  </div>
   <div id="canvas-wrap"></div>
+  <div id="alt-reticle" aria-hidden="true"></div>
+  <div id="wake-veil" aria-hidden="true">
+    <div class="wake-lid top"></div>
+    <div class="wake-lid bot"></div>
+    <div class="wake-fade"></div>
+    <p class="wake-hint">Нажмите, чтобы проснуться</p>
+  </div>
+  <div id="intro-skip" aria-hidden="true">
+    <div class="intro-skip-track"><i id="intro-skip-fill"></i></div>
+    <span>Удерживайте <b>SPACE</b> — пропуск · 3 сек</span>
+  </div>
   <div id="atmo-veil"></div>
   <div id="warp-veil"></div>
 
@@ -111,6 +132,36 @@
   </div>
 
   <button id="hud-toggle" type="button" title="Скрыть / показать HUD (H)" aria-label="Скрыть HUD">▣</button>
+  <button id="nav-map-btn" type="button" title="Карта / варп (M)" aria-label="Открыть карту">MAP</button>
+
+  <!-- Nav tablet: system map + warp target pick -->
+  <div id="nav-tablet" class="hidden" aria-hidden="true">
+    <div class="nav-tablet-shell">
+      <header class="nav-tablet-bar">
+        <div class="nav-tablet-title">
+          <span class="nav-led"></span>
+          НАВИГАЦИОННЫЙ ПЛАНШЕТ · SOLAR NEMESIS
+        </div>
+        <button type="button" id="nav-tablet-close" title="Закрыть (Esc)">✕</button>
+      </header>
+      <div class="nav-tablet-body">
+        <canvas id="nav-map-canvas" width="720" height="520"></canvas>
+        <aside class="nav-tablet-side">
+          <div class="nav-side-label">ЦЕЛЬ ВАРПА</div>
+          <div id="nav-planet-list" class="nav-planet-list"></div>
+          <div id="nav-selection" class="nav-selection">
+            <div class="nav-sel-name">—</div>
+            <div class="nav-sel-meta">Выберите планету на карте</div>
+            <div class="nav-sel-desc"></div>
+          </div>
+          <button type="button" id="nav-warp-btn" class="nav-warp-btn" disabled>
+            ВАРП К ОРБИТЕ
+          </button>
+          <p class="nav-hint">Клик по планете → корабль сам наведётся и начнёт варп · Esc — закрыть · M / NAV — планшет</p>
+        </aside>
+      </div>
+    </div>
+  </div>
 
   <div id="mobile-pad">
     <div id="look-zone"></div>
@@ -138,20 +189,26 @@
 
   <div id="hud">
     <div id="mode"></div>
+    <div id="alt-hud" class="hidden" aria-live="polite">
+      <div class="alt-label">ВЫСОТА ДО ПОВЕРХНОСТИ</div>
+      <div class="alt-value" id="alt-value">—</div>
+      <div class="alt-sub" id="alt-sub"></div>
+    </div>
 
     <div id="planet-info" class="panel">
       <h2 id="info-name">—</h2>
       <p id="info-desc">—</p>
     </div>
 
-    <div id="hint" class="panel">
-      <h2>Добро пожаловать</h2>
-      <p id="hint-text">Кликните, чтобы начать полёт. Мышь — поворот корабля · Alt+мышь — осмотр кабины · Q/E — крен · WASD — тяга · Пробел/Ctrl — вверх/вниз · X — тормоз.</p>
-      <button class="cta" type="button">Начать полёт</button>
+    <div id="hint" class="panel hidden">
+      <h2>Пробуждение</h2>
+      <p id="hint-text">Вы в кресле пилота. Мышь — поворот · Alt — осмотр + прицел · ЛКМ по кнопке · F — встать/сесть · WASD — тяга / ходьба · Shift — ускорение · M / NAV — карта и варп · HYPER — прицел · Q/E — крен · X — тормоз.</p>
+      <button class="cta" type="button">Взять штурвал</button>
     </div>
+    <div id="resume-tip" class="hidden" aria-hidden="true">Кликните, чтобы снова управлять мышью</div>
   </div>
 
-  <script type="module" src="js/game.js"></script>
+  <script type="module" src="js/game.js?v=26"></script>
   <script>
     (function () {
       var host = location.hostname;
@@ -159,13 +216,15 @@
         var s = document.createElement('script');
         s.src = 'js/live-reload.js';
         document.body.appendChild(s);
-        return;
       }
-      // Production (GitHub Pages): service worker for cache + faster Android reloads
+      // Cache app + CDN assets everywhere (local + GitHub Pages)
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
           var swUrl = (window.__BASE__ || './') + 'sw.js';
           navigator.serviceWorker.register(swUrl, { scope: window.__BASE__ || './' })
+            .then(function (reg) {
+              if (reg && reg.update) reg.update();
+            })
             .catch(function (err) { console.warn('[Solar] SW register failed', err); });
         });
       }

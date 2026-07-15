@@ -1,13 +1,13 @@
 /**
- * Solar Memesis — browser live reload client (SSE)
- * Python watcher → Node /__reload → this reloads the page (F5)
+ * Solar Nemesis — browser live reload (SSE)
+ * Only reloads when the server actually broadcasts (LIVE_RELOAD=1).
  */
 (function () {
   if (window.__SOLAR_LIVE_RELOAD__) return;
   window.__SOLAR_LIVE_RELOAD__ = true;
 
   let es;
-  let retryMs = 800;
+  let retryMs = 1500;
 
   function connect() {
     try {
@@ -20,20 +20,19 @@
     es.addEventListener('reload', function (ev) {
       let reason = '';
       try { reason = JSON.parse(ev.data).reason || ''; } catch (_) {}
-      console.log('[Solar Memesis] live reload', reason);
-      // Full refresh like F5
+      console.log('[Solar Nemesis] live reload', reason);
       location.reload();
     });
 
     es.onopen = function () {
-      retryMs = 800;
-      console.log('[Solar Memesis] live reload connected');
+      retryMs = 1500;
     };
 
     es.onerror = function () {
-      es.close();
+      try { es.close(); } catch (_) {}
+      // Reconnect quietly — do NOT reload the page on SSE errors
       setTimeout(connect, retryMs);
-      retryMs = Math.min(retryMs * 1.5, 5000);
+      retryMs = Math.min(retryMs * 1.6, 8000);
     };
   }
 

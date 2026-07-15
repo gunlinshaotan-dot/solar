@@ -22,6 +22,83 @@
       -webkit-user-select: none;
       user-select: none;
       -webkit-tap-highlight-color: transparent;
+      /* Help mobile browsers use full visual area */
+      min-height: 100dvh;
+      min-height: -webkit-fill-available;
+    }
+
+    /* ---- Landscape require gate (phones) ---- */
+    #orient-gate {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+      background:
+        radial-gradient(ellipse at 50% 30%, rgba(30, 70, 120, 0.35), transparent 55%),
+        #02060e;
+      text-align: center;
+      pointer-events: auto;
+    }
+    body.need-landscape #orient-gate {
+      display: flex;
+    }
+    body.need-landscape #wake-veil,
+    body.need-landscape #intro-skip,
+    body.need-landscape #mobile-pad,
+    body.need-landscape #hint,
+    body.need-landscape #hud,
+    body.need-landscape #nav-tablet {
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+    .orient-card {
+      max-width: 340px;
+    }
+    .orient-phone {
+      width: 48px;
+      height: 86px;
+      margin: 0 auto 22px;
+      border: 3px solid rgba(120, 200, 255, 0.7);
+      border-radius: 10px;
+      position: relative;
+      animation: orient-tilt 1.6s ease-in-out infinite;
+      box-shadow: 0 0 24px rgba(60, 160, 255, 0.25);
+    }
+    .orient-phone::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 8px;
+      width: 18px;
+      height: 4px;
+      margin-left: -9px;
+      border-radius: 2px;
+      background: rgba(120, 200, 255, 0.55);
+    }
+    @keyframes orient-tilt {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(90deg); }
+      60% { transform: rotate(90deg); }
+    }
+    .orient-title {
+      font-family: Orbitron, sans-serif;
+      font-size: 1.15rem;
+      letter-spacing: 0.06em;
+      color: #c8e8ff;
+      margin-bottom: 10px;
+    }
+    .orient-sub {
+      font-size: 0.92rem;
+      color: rgba(180, 210, 240, 0.75);
+      line-height: 1.45;
+      margin-bottom: 22px;
+    }
+    .orient-sub b { color: #7fd4ff; }
+    #orient-fs-btn {
+      min-width: 180px;
     }
 
     #canvas-wrap,
@@ -42,7 +119,13 @@
     }
 
     #canvas-wrap { z-index: 0; }
-    canvas { display: block; width: 100%; height: 100%; }
+    #canvas-wrap > canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100%;
+      max-height: 100%;
+    }
 
     /* Volumetric cockpit — bleed past edges so shake never shows raw space */
     #porthole {
@@ -147,15 +230,23 @@
     }
 
     #porthole .ck-vignette {
-      position: absolute;
-      inset: var(--bleed);
-      z-index: 2;
+      display: none !important;
+      opacity: 0 !important;
+    }
+
+    #warp-veil {
+      z-index: 4;
       pointer-events: none;
+      opacity: 0;
+      background: transparent;
+      mix-blend-mode: normal;
+      transition: opacity 0.08s linear;
+    }
+
+    #warp-veil.hot {
       background:
-        radial-gradient(ellipse 60% 55% at 50% 45%,
-          transparent 35%,
-          rgba(0, 0, 0, 0.3) 68%,
-          rgba(0, 0, 0, 0.65) 100%);
+        radial-gradient(ellipse at center, transparent 35%, rgba(60, 140, 255, 0.08) 75%, rgba(120, 200, 255, 0.14) 100%);
+      mix-blend-mode: screen;
     }
 
     #porthole .ck-overhead {
@@ -772,10 +863,263 @@
       transition: opacity 0.25s ease;
     }
 
-    body.hud-hidden #hud {
+    /* ——— Navigation tablet (system map + warp pick) ——— */
+    #nav-tablet {
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      display: grid;
+      place-items: center;
+      padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+        max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+      background:
+        radial-gradient(ellipse at 50% 40%, rgba(20, 50, 90, 0.55), rgba(2, 4, 12, 0.88));
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+      opacity: 1;
+      transition: opacity 0.22s ease;
+    }
+
+    #nav-tablet.hidden {
+      display: none;
       opacity: 0;
-      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .nav-tablet-shell {
+      width: min(1080px, 96vw);
+      height: min(640px, 88vh);
+      display: flex;
+      flex-direction: column;
+      border-radius: 18px;
+      border: 1px solid rgba(90, 190, 255, 0.35);
+      background:
+        linear-gradient(165deg, rgba(12, 22, 42, 0.97), rgba(6, 10, 22, 0.98));
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.5),
+        0 24px 80px rgba(0, 40, 80, 0.55),
+        inset 0 1px 0 rgba(140, 210, 255, 0.12);
+      overflow: hidden;
+      font-family: "Segoe UI", "Consolas", ui-monospace, monospace;
+    }
+
+    .nav-tablet-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(80, 160, 220, 0.25);
+      background: linear-gradient(90deg, rgba(20, 60, 100, 0.35), transparent);
+    }
+
+    .nav-tablet-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #9fd8ff;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+
+    .nav-led {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #3eff9a;
+      box-shadow: 0 0 10px #3eff9a;
+      animation: nav-led-pulse 1.6s ease-in-out infinite;
+    }
+
+    @keyframes nav-led-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+
+    #nav-tablet-close {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid rgba(120, 180, 230, 0.35);
+      background: rgba(8, 16, 32, 0.8);
+      color: #d8ecff;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+
+    #nav-tablet-close:hover {
+      background: rgba(255, 80, 70, 0.35);
+      border-color: rgba(255, 140, 120, 0.5);
+    }
+
+    .nav-tablet-body {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr minmax(220px, 280px);
+      gap: 0;
+    }
+
+    #nav-map-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #02060e;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .nav-tablet-side {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-left: 1px solid rgba(80, 160, 220, 0.22);
+      background: rgba(4, 10, 22, 0.9);
+      overflow: auto;
+    }
+
+    .nav-side-label {
+      color: rgba(120, 190, 240, 0.75);
+      font-size: 0.68rem;
+      letter-spacing: 0.14em;
+      font-weight: 700;
+    }
+
+    .nav-planet-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 42%;
+      overflow: auto;
+    }
+
+    .nav-planet-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: rgba(20, 40, 70, 0.35);
+      color: #c8e4ff;
+      cursor: pointer;
+      font-size: 0.78rem;
+      text-align: left;
+    }
+
+    .nav-planet-item:hover {
+      border-color: rgba(80, 180, 255, 0.35);
+      background: rgba(30, 70, 110, 0.45);
+    }
+
+    .nav-planet-item.selected {
+      border-color: rgba(255, 210, 100, 0.65);
+      background: rgba(90, 70, 20, 0.35);
+      color: #ffe9a8;
+    }
+
+    .nav-planet-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .nav-planet-dist {
+      margin-left: auto;
+      opacity: 0.7;
+      font-size: 0.68rem;
+    }
+
+    .nav-selection {
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(70, 150, 210, 0.3);
+      background: rgba(10, 24, 44, 0.65);
+      min-height: 88px;
+    }
+
+    .nav-sel-name {
+      color: #ffe08a;
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 4px;
+    }
+
+    .nav-sel-meta {
+      color: #7ec8ff;
+      font-size: 0.72rem;
+      margin-bottom: 6px;
+    }
+
+    .nav-sel-desc {
+      color: rgba(180, 210, 235, 0.85);
+      font-size: 0.72rem;
+      line-height: 1.35;
+    }
+
+    .nav-warp-btn {
+      margin-top: auto;
+      padding: 14px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(80, 230, 255, 0.55);
+      background: linear-gradient(180deg, rgba(40, 140, 190, 0.85), rgba(10, 60, 100, 0.95));
+      color: #e8f8ff;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      font-size: 0.85rem;
+      cursor: pointer;
+      box-shadow: 0 0 24px rgba(40, 180, 255, 0.25);
+    }
+
+    .nav-warp-btn:hover:not(:disabled) {
+      filter: brightness(1.12);
+    }
+
+    .nav-warp-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .nav-hint {
+      margin: 0;
+      color: rgba(140, 180, 210, 0.55);
+      font-size: 0.65rem;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 820px) {
+      .nav-tablet-body {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(220px, 1fr) auto;
+      }
+      .nav-tablet-side {
+        border-left: none;
+        border-top: 1px solid rgba(80, 160, 220, 0.22);
+        max-height: 46%;
+      }
+      .nav-planet-list { max-height: 110px; }
+    }
+
+    body.nav-tablet-open #mobile-pad {
+      opacity: 0.15;
+      pointer-events: none;
+    }
+
+    body.ship-power-off #mode {
+      color: #ff6a5a;
+    }
+
+    body.ship-power-off #planet-info {
+      opacity: 0 !important;
       pointer-events: none !important;
+    }
+
+    body.ship-power-off #hud-toggle {
+      opacity: 0.25;
     }
 
     /* Keep flight stick usable when HUD info is hidden */
@@ -805,8 +1149,200 @@
       cursor: pointer;
     }
 
+    #nav-map-btn {
+      position: fixed;
+      z-index: 40;
+      top: max(10px, env(safe-area-inset-top));
+      left: max(62px, calc(env(safe-area-inset-left) + 52px));
+      height: 44px;
+      min-width: 56px;
+      padding: 0 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(80, 220, 160, 0.45);
+      background: rgba(8, 28, 24, 0.78);
+      color: #9fffd0;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      pointer-events: auto;
+      touch-action: manipulation;
+      backdrop-filter: blur(10px);
+      cursor: pointer;
+      font-family: ui-monospace, Consolas, monospace;
+    }
+
+    #nav-map-btn:hover {
+      background: rgba(20, 70, 55, 0.9);
+      border-color: rgba(100, 255, 180, 0.7);
+    }
+
+    body.ship-power-off #nav-map-btn {
+      opacity: 0.3;
+    }
+
+    body.nav-tablet-open #nav-map-btn {
+      background: rgba(40, 120, 90, 0.9);
+    }
+
+    /* PC: keep MAP button visible (HUD cube stays hidden) */
+    @media (hover: hover) and (pointer: fine) and (min-width: 900px) {
+      #hud-toggle { display: none !important; }
+      #nav-map-btn {
+        left: max(10px, env(safe-area-inset-left));
+      }
+    }
+
     #hud-toggle:active {
       background: rgba(255, 160, 60, 0.45);
+    }
+
+    #wake-veil {
+      position: fixed;
+      inset: 0;
+      z-index: 28;
+      pointer-events: none;
+      --wake-open: 0;
+    }
+
+    #wake-veil.await-click {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    #wake-veil .wake-hint {
+      position: absolute;
+      left: 50%;
+      bottom: 14%;
+      transform: translateX(-50%);
+      margin: 0;
+      color: rgba(200, 220, 255, 0.35);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.6s ease;
+    }
+
+    #wake-veil.await-click .wake-hint {
+      opacity: 1;
+    }
+
+    #wake-veil.done {
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.45s ease, visibility 0.45s;
+    }
+
+    #wake-veil .wake-lid {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 54%;
+      background: #000;
+      transition: none;
+      will-change: transform;
+    }
+
+    #wake-veil .wake-lid.top {
+      top: 0;
+      transform: translateY(calc(var(--wake-open) * -105%));
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.85);
+    }
+
+    #wake-veil .wake-lid.bot {
+      bottom: 0;
+      transform: translateY(calc(var(--wake-open) * 105%));
+      box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.85);
+    }
+
+    #wake-veil .wake-fade {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.55) 100%);
+      opacity: calc(1 - var(--wake-open) * 0.92);
+      pointer-events: none;
+    }
+
+    #intro-skip {
+      position: fixed;
+      left: 50%;
+      bottom: max(22px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 30;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.45s ease;
+    }
+    body.waking:not(.wake-await) #intro-skip {
+      display: flex;
+      opacity: 0.9;
+      pointer-events: auto;
+    }
+    #intro-skip span {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      color: rgba(190, 210, 240, 0.55);
+      text-transform: uppercase;
+    }
+    #intro-skip span b {
+      color: rgba(120, 210, 255, 0.9);
+      font-weight: 600;
+    }
+    #intro-skip .intro-skip-track {
+      width: min(220px, 48vw);
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(80, 110, 150, 0.25);
+      overflow: hidden;
+    }
+    #intro-skip .intro-skip-track i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3ec7ff, #88ffcc);
+      box-shadow: 0 0 10px rgba(62, 199, 255, 0.55);
+      transition: width 0.05s linear;
+    }
+
+    body.waking #planet-info,
+    body.waking #hud-toggle,
+    body.waking #alt-hud,
+    body.waking #nav-map-btn,
+    body.waking #mobile-pad,
+    body.waking #alt-reticle {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+    body.waking #mode {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+
+    #resume-tip {
+      position: absolute;
+      bottom: max(28px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 18px;
+      border-radius: 10px;
+      background: rgba(4, 10, 22, 0.72);
+      border: 1px solid rgba(140, 180, 255, 0.28);
+      color: rgba(220, 235, 255, 0.9);
+      font-size: 0.82rem;
+      pointer-events: none;
+      letter-spacing: 0.02em;
+      transition: opacity 0.35s ease;
+    }
+
+    #resume-tip.hidden {
+      opacity: 0;
     }
 
     .panel {
@@ -833,34 +1369,85 @@
       z-index: 2;
     }
 
+    #alt-hud {
+      position: absolute;
+      left: 50%;
+      bottom: max(72px, calc(env(safe-area-inset-bottom) + 56px));
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 3;
+      padding: 10px 22px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(80, 220, 160, 0.35);
+      background: rgba(4, 14, 18, 0.62);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+      min-width: min(280px, 78vw);
+    }
+
+    #alt-hud.hidden {
+      display: none;
+    }
+
+    #alt-hud .alt-label {
+      font-size: 0.65rem;
+      letter-spacing: 0.14em;
+      color: rgba(140, 230, 190, 0.75);
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    #alt-hud .alt-value {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: clamp(1.35rem, 4.2vw, 1.85rem);
+      font-weight: 800;
+      color: #9cffc0;
+      text-shadow: 0 0 18px rgba(80, 255, 160, 0.35);
+      line-height: 1.15;
+    }
+
+    #alt-hud.low .alt-value {
+      color: #ffe08a;
+    }
+
+    #alt-hud.land .alt-value {
+      color: #ff9a6a;
+    }
+
+    #alt-hud .alt-sub {
+      margin-top: 3px;
+      font-size: 0.72rem;
+      color: rgba(180, 220, 255, 0.8);
+    }
+
+    body.cockpit-3d:not(.landed) #alt-hud:not(.hidden) {
+      opacity: 1;
+    }
+
+    body.landed #alt-hud,
+    body.hud-hidden #alt-hud {
+      display: none !important;
+    }
+
+    /* Fullscreen atmo veil disabled — FX draw on 3D canopy glass / 2D porthole glass only */
     #atmo-veil {
-      position: fixed;
-      inset: 0;
+      display: none !important;
       pointer-events: none;
-      z-index: 5;
-      opacity: 0;
-      transition: opacity 0.35s ease;
-      background:
-        radial-gradient(ellipse at center, transparent 35%, rgba(20, 40, 80, 0.55) 100%),
-        linear-gradient(180deg, rgba(120, 180, 255, 0.12), transparent 40%, rgba(255, 140, 60, 0.1));
-      mix-blend-mode: screen;
+      opacity: 0 !important;
     }
 
-    #atmo-veil.active { opacity: 1; }
-
-    #warp-veil {
-      z-index: 4;
-      pointer-events: none;
-      opacity: 0;
+    body.in-atmosphere #porthole .ck-glass,
+    body.atmo-entry #porthole .ck-glass {
+      /* Keep glass almost clear — only a whisper of planet tint on the frame */
+      opacity: 0.98;
       background:
-        radial-gradient(ellipse at center, transparent 40%, rgba(40, 120, 255, 0.06) 78%, rgba(80, 160, 255, 0.14) 100%);
-      mix-blend-mode: screen;
-      transition: opacity 0.08s linear;
-    }
-
-    #warp-veil.hot {
-      background:
-        radial-gradient(ellipse at center, transparent 35%, rgba(60, 140, 255, 0.1) 75%, rgba(120, 200, 255, 0.18) 100%);
+        radial-gradient(ellipse at center,
+          transparent 70%,
+          color-mix(in srgb, var(--atmo-tint, #6eb6ff) 8%, transparent) 100%);
+      box-shadow: none;
+      filter: none;
+      animation: none;
     }
 
     #planet-info {
@@ -873,6 +1460,109 @@
       transform: translateY(8px);
       transition: opacity 0.25s ease, transform 0.25s ease;
       z-index: 2;
+    }
+
+    body.cabin-explore,
+    body.cabin-explore #canvas-wrap > canvas {
+      cursor: crosshair;
+    }
+
+    #alt-reticle {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      margin: -9px 0 0 -9px;
+      border: 1.5px solid rgba(110, 190, 255, 0.55);
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(80, 170, 255, 0.25), inset 0 0 6px rgba(120, 200, 255, 0.15);
+      background: rgba(80, 160, 255, 0.08);
+      pointer-events: none;
+      opacity: 0;
+      transform: scale(0.85);
+      transition: opacity 0.12s ease, transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+      z-index: 6;
+    }
+
+    #alt-reticle::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 3px;
+      height: 3px;
+      margin: -1.5px 0 0 -1.5px;
+      border-radius: 50%;
+      background: rgba(150, 210, 255, 0.7);
+    }
+
+    body.alt-aim #alt-reticle {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    body.alt-aim.alt-aim-hot #alt-reticle {
+      border-color: rgba(160, 230, 255, 0.95);
+      background: rgba(100, 190, 255, 0.18);
+      box-shadow: 0 0 14px rgba(100, 200, 255, 0.45), inset 0 0 8px rgba(140, 220, 255, 0.25);
+    }
+
+    /* Hyperdrive aim: cyan diamond crosshair */
+    body.hyper-aim #alt-reticle {
+      width: 28px;
+      height: 28px;
+      margin: -14px 0 0 -14px;
+      border-radius: 2px;
+      transform: scale(1) rotate(45deg);
+      border-color: rgba(100, 230, 255, 0.7);
+      box-shadow: 0 0 16px rgba(80, 210, 255, 0.35);
+    }
+
+    body.hyper-aim.hyper-aim-hot #alt-reticle {
+      border-color: rgba(180, 255, 255, 0.95);
+      background: rgba(90, 220, 255, 0.22);
+      animation: hyper-reticle-pulse 0.9s ease-in-out infinite;
+    }
+
+    @keyframes hyper-reticle-pulse {
+      0%, 100% { box-shadow: 0 0 12px rgba(80, 210, 255, 0.3); }
+      50% { box-shadow: 0 0 22px rgba(120, 240, 255, 0.55); }
+    }
+
+    body.hyper-prep #warp-veil {
+      transition: opacity 0.35s ease;
+      background:
+        radial-gradient(ellipse at center, rgba(60, 120, 200, 0.03) 0%, transparent 60%);
+      mix-blend-mode: screen;
+      animation: none;
+    }
+
+    body.hyper-travel #warp-veil {
+      background:
+        radial-gradient(ellipse at center, transparent 30%, rgba(50, 130, 255, 0.1) 72%, rgba(160, 220, 255, 0.2) 100%);
+      mix-blend-mode: screen;
+    }
+
+    body.hyper-travel #porthole .ck-glass {
+      animation: hyper-glass-streak 0.28s linear infinite;
+      opacity: 1;
+      background:
+        linear-gradient(125deg,
+          rgba(180, 230, 255, 0.28) 0%,
+          transparent 28%,
+          rgba(90, 170, 255, 0.12) 70%,
+          rgba(200, 240, 255, 0.22) 100%);
+    }
+
+    @keyframes hyper-glass-streak {
+      0% { opacity: 0.9; }
+      50% { opacity: 1; }
+      100% { opacity: 0.85; }
+    }
+
+    body.cockpit-3d:not(.landed) #planet-info {
+      display: none !important;
     }
 
     #planet-info.visible { opacity: 1; transform: translateY(0); }

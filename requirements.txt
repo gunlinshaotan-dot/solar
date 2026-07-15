@@ -1,2 +1,0 @@
-# Solar Memesis — optional (watcher uses Python stdlib only)
-# watchdog>=3.0.0

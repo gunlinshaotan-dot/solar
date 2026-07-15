@@ -2,7 +2,4 @@
 .DS_Store
 Thumbs.db
 *.tmp
-skip1.jpg
-moon_alt.jpg
-css/1.txt
 _patch*.py
