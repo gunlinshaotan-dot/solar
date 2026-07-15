@@ -12,7 +12,7 @@ import * as THREE from 'three';
 
     // Browser + Three.js memory cache — assets stay hot after first load
     THREE.Cache.enabled = true;
-    const HTTP_CACHE = 'solar-nemesis-v48';
+    const HTTP_CACHE = 'solar-nemesis-v49';
     const LOCAL_ASSETS = [
       'index.html',
       'css/style.css',
@@ -2464,7 +2464,7 @@ import * as THREE from 'three';
       hint.classList.add('hidden');
       if (resumeTip) resumeTip.classList.add('hidden');
       document.body.classList.add('waking', 'wake-await');
-      document.body.classList.remove('intro-boot', 'cabin-walk');
+      document.body.classList.remove('intro-boot', 'cabin-walk', 'intro-skip-ready');
 
       // Prefab habitation so bunk / corridor exist under closed lids
       try {
@@ -2564,7 +2564,7 @@ import * as THREE from 'three';
       headPitch = 0;
       head.rotation.set(0, 0, 0, 'YXZ');
       resetWalkBob();
-      document.body.classList.remove('waking', 'wake-await', 'cabin-walk', 'intro-boot');
+      document.body.classList.remove('waking', 'wake-await', 'cabin-walk', 'intro-boot', 'intro-skip-ready');
       if (wakeVeil) {
         wakeVeil.classList.add('done');
         wakeVeil.style.setProperty('--wake-open', '1');
@@ -2587,6 +2587,15 @@ import * as THREE from 'three';
 
     function updateIntroSkip(dt) {
       if (!wake || !wake.active || wake.gate || wake.finished) {
+        if (introSkipFill) introSkipFill.style.width = '0%';
+        document.body.classList.remove('intro-skip-ready');
+        return;
+      }
+      // Hint appears only after 8s of cinematic (not from the first second)
+      const skipReady = wake.totalAge >= INTRO_SKIP_SHOW_AFTER;
+      document.body.classList.toggle('intro-skip-ready', skipReady);
+      if (!skipReady) {
+        wake.skipHold = 0;
         if (introSkipFill) introSkipFill.style.width = '0%';
         return;
       }
