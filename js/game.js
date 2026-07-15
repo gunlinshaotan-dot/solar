@@ -2346,6 +2346,7 @@ import * as THREE from 'three';
       new THREE.Vector3(0.08, 0.08, 0.55),
     ];
     const INTRO_SKIP_HOLD = 3.0;
+    const INTRO_SKIP_SHOW_AFTER = 8.0;
 
     if (isTouch && hintText) {
       hintText.textContent = 'Джойстик — тяга/тормоз/крен · свайп — поворот · ВСТАТЬ — ходьба · ⚡ — ×3 · ✕ — тормоз · 👁 — осмотр.';

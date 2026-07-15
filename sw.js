@@ -1,5 +1,5 @@
 /* Calamity Space — full asset cache (Pages + local) */
-const CACHE = 'solar-nemesis-v48';
+const CACHE = 'solar-nemesis-v49';
 const CDN_CACHE = 'solar-cdn-v4';
 
 const PRECACHE = [

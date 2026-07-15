@@ -1282,7 +1282,7 @@
       opacity: 0;
       transition: opacity 0.45s ease;
     }
-    body.waking:not(.wake-await) #intro-skip {
+    body.waking:not(.wake-await).intro-skip-ready #intro-skip {
       display: flex;
       opacity: 0.9;
       pointer-events: auto;
