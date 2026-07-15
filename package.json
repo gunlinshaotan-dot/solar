@@ -1,0 +1,14 @@
+{
+  "name": "solar-memesis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Solar Memesis — 3D solar system flight (HTML/CSS/JS + Node + Python live reload)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "watch": "python watcher.py"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

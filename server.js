@@ -1,0 +1,133 @@
+/**
+ * Solar Memesis — Node static + live-reload hub
+ * Listens on 0.0.0.0:3000
+ */
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { URL } = require('url');
+
+const HOST = '0.0.0.0';
+const PORT = 3000;
+const ROOT = __dirname;
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.map': 'application/json',
+};
+
+/** @type {Set<import('http').ServerResponse>} */
+const sseClients = new Set();
+
+function sendReload(reason = 'change') {
+  const payload = `event: reload\ndata: ${JSON.stringify({ reason, t: Date.now() })}\n\n`;
+  for (const res of sseClients) {
+    try {
+      res.write(payload);
+    } catch (_) {
+      sseClients.delete(res);
+    }
+  }
+  console.log(`[live-reload] broadcast → ${sseClients.size} client(s) (${reason})`);
+}
+
+function safeJoin(urlPath) {
+  const decoded = decodeURIComponent(urlPath.split('?')[0]);
+  const clean = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
+  const full = path.join(ROOT, clean);
+  if (!full.startsWith(ROOT)) return null;
+  return full;
+}
+
+function serveFile(res, filePath) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('404 Not Found');
+      return;
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-store',
+    });
+    res.end(data);
+  });
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  // Python watcher pokes this to refresh all browsers
+  if (url.pathname === '/__reload' && (req.method === 'POST' || req.method === 'GET')) {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      let reason = 'manual';
+      try {
+        if (body) reason = JSON.parse(body).file || reason;
+      } catch (_) {}
+      if (url.searchParams.get('file')) reason = url.searchParams.get('file');
+      sendReload(reason);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, clients: sseClients.size }));
+    });
+    return;
+  }
+
+  // Browser EventSource subscription
+  if (url.pathname === '/__events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.write(': connected\n\n');
+    sseClients.add(res);
+    req.on('close', () => sseClients.delete(res));
+    return;
+  }
+
+  let filePath = safeJoin(url.pathname === '/' ? '/index.html' : url.pathname);
+  if (!filePath) {
+    res.writeHead(403).end('Forbidden');
+    return;
+  }
+
+  fs.stat(filePath, (err, st) => {
+    if (!err && st.isDirectory()) {
+      filePath = path.join(filePath, 'index.html');
+    }
+    fs.stat(filePath, (err2) => {
+      if (err2) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('404 Not Found');
+        return;
+      }
+      serveFile(res, filePath);
+    });
+  });
+});
+
+server.listen(PORT, HOST, () => {
+  console.log('');
+  console.log('  ╔══════════════════════════════════════╗');
+  console.log('  ║       SOLAR MEMESIS  —  ONLINE       ║');
+  console.log('  ╚══════════════════════════════════════╝');
+  console.log(`  → http://127.0.0.1:${PORT}`);
+  console.log(`  → http://0.0.0.0:${PORT}  (all interfaces)`);
+  console.log('');
+});

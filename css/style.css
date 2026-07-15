@@ -1,0 +1,1070 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500;600&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --app-w: 100vw;
+      --app-h: 100dvh;
+    }
+
+    html, body {
+      width: var(--app-w);
+      height: var(--app-h);
+      max-width: 100%;
+      max-height: 100%;
+      overflow: hidden;
+      position: fixed;
+      inset: 0;
+      background: #000;
+      font-family: 'Space Grotesk', sans-serif;
+      color: #e8f0ff;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #canvas-wrap,
+    #atmo-veil,
+    #warp-veil,
+    #hud,
+    #mobile-pad,
+    #loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: var(--app-w);
+      height: var(--app-h);
+    }
+
+    #porthole {
+      position: fixed;
+    }
+
+    #canvas-wrap { z-index: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* Volumetric cockpit — bleed past edges so shake never shows raw space */
+    #porthole {
+      z-index: 8;
+      pointer-events: none;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.45s ease;
+      --ck-metal: #14181f;
+      --ck-metal-2: #0b0d12;
+      --ck-edge: #2a3340;
+      --ck-glow: #3ec7ff;
+      --bleed: 60px;
+      --dash-h: clamp(90px, 16vh, 145px);
+      --console-h: clamp(110px, 21vh, 180px);
+      --floor-h: clamp(30px, 6vh, 70px);
+      --console-stack: calc(var(--dash-h) + var(--console-h) + var(--floor-h) + 25px);
+      --win-bot: calc(100% - var(--bleed) - var(--console-stack));
+      --pillar-w: clamp(65px, 8vw, 130px);
+      --ceil-h: clamp(48px, 9vh, 90px);
+      top: calc(-1 * var(--bleed));
+      left: calc(-1 * var(--bleed));
+      width: calc(var(--app-w) + 2 * var(--bleed));
+      height: calc(var(--app-h) + 2 * var(--bleed));
+      will-change: transform;
+      transform-origin: 50% 65%;
+    }
+
+    body.landed #porthole,
+    body.no-porthole #porthole,
+    body.cockpit-3d #porthole {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    #porthole .ck-nose { display: none !important; }
+
+    /* Opaque edge seals — always cover screen borders even while shaking */
+    #porthole .ck-bleed {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, #020406 0, #020406 var(--bleed), transparent calc(var(--bleed) + 1px), transparent calc(100% - var(--bleed) - 1px), #020406 calc(100% - var(--bleed)), #020406 100%),
+        linear-gradient(180deg, #020406 0, #020406 var(--bleed), transparent calc(var(--bleed) + 1px), transparent calc(100% - var(--bleed) - 1px), #020406 calc(100% - var(--bleed)), #020406 100%);
+    }
+
+    /* Forward cowling receding into the viewport */
+    #porthole .ck-nose {
+      position: absolute;
+      left: 50%;
+      top: calc(var(--ceil-h) + var(--bleed) + 4%);
+      width: min(46vw, 560px);
+      height: min(30vh, 280px);
+      transform: translateX(-50%);
+      z-index: 2;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 75% 95% at 50% 100%,
+          rgba(10, 16, 26, 0.7) 0%,
+          rgba(5, 8, 14, 0.35) 50%,
+          transparent 80%);
+      clip-path: polygon(10% 100%, 50% 5%, 90% 100%);
+      box-shadow: inset 0 -10px 30px rgba(0, 0, 0, 0.8);
+    }
+
+    #porthole .ck-arch {
+      position: absolute;
+      left: calc(var(--pillar-w) + var(--bleed) - 6px);
+      right: calc(var(--pillar-w) + var(--bleed) - 6px);
+      z-index: 3;
+      border: 2px solid rgba(100, 145, 200, 0.32);
+      border-bottom: none;
+      border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+      box-shadow:
+        0 -8px 25px rgba(0, 0, 0, 0.6),
+        inset 0 1.5px 0 rgba(160, 200, 255, 0.2);
+      pointer-events: none;
+    }
+
+    #porthole .ck-arch.top {
+      top: calc(var(--ceil-h) + var(--bleed) + 2px);
+      height: 26px;
+      opacity: 0.95;
+    }
+
+    #porthole .ck-arch.mid {
+      top: calc(var(--ceil-h) + var(--bleed) + 15%);
+      height: 18px;
+      opacity: 0.5;
+      border-color: rgba(80, 115, 160, 0.25);
+    }
+
+    #porthole .ck-arch.bot {
+      top: calc(var(--win-bot) - 24px);
+      height: 22px;
+      border-radius: 0 0 50% 50% / 0 0 100% 100%;
+      border-top: none;
+      border-bottom: 2px solid rgba(100, 145, 200, 0.32);
+      opacity: 0.85;
+    }
+
+    #porthole .ck-vignette {
+      position: absolute;
+      inset: var(--bleed);
+      z-index: 2;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 60% 55% at 50% 45%,
+          transparent 35%,
+          rgba(0, 0, 0, 0.3) 68%,
+          rgba(0, 0, 0, 0.65) 100%);
+    }
+
+    #porthole .ck-overhead {
+      position: absolute;
+      left: 20%;
+      right: 20%;
+      bottom: -35px;
+      height: 35px;
+      display: flex;
+      gap: 10px;
+      z-index: 2;
+      transform: perspective(450px) rotateX(40deg);
+      transform-origin: top center;
+    }
+
+    #porthole .ck-overhead span {
+      flex: 1;
+      border-radius: 4px 4px 8px 8px;
+      background: linear-gradient(180deg, #323b4d, #0f131a);
+      border: 1px solid rgba(90, 125, 170, 0.35);
+      box-shadow: 0 16px 30px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(180, 220, 255, 0.15);
+    }
+
+    #porthole .ck-tunnel {
+      position: absolute;
+      top: calc(var(--ceil-h) + var(--bleed) + 4%);
+      height: 45%;
+      width: calc(var(--pillar-w) * 1.1);
+      z-index: 3;
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    #porthole .ck-tunnel.left {
+      left: calc(var(--bleed) + var(--pillar-w) * 0.05);
+      background:
+        linear-gradient(90deg, rgba(0,0,0,0.85), transparent),
+        repeating-linear-gradient(180deg, #1d2634 0 12px, #0e121a 12px 24px);
+      transform: perspective(400px) rotateY(28deg);
+      transform-origin: left center;
+      clip-path: polygon(0 6%, 100% 0, 100% 100%, 0 94%);
+    }
+
+    #porthole .ck-tunnel.right {
+      right: calc(var(--bleed) + var(--pillar-w) * 0.05);
+      background:
+        linear-gradient(270deg, rgba(0,0,0,0.85), transparent),
+        repeating-linear-gradient(180deg, #1d2634 0 12px, #0e121a 12px 24px);
+      transform: perspective(400px) rotateY(-28deg);
+      transform-origin: right center;
+      clip-path: polygon(0 0, 100% 6%, 100% 94%, 0 100%);
+    }
+
+    #porthole .ck-corner {
+      position: absolute;
+      top: calc(var(--ceil-h) + var(--bleed));
+      width: 26px;
+      bottom: calc(var(--bleed) + clamp(40px, 8vh, 90px));
+      z-index: 6;
+      background: linear-gradient(180deg, #344053, #131822 30%, #090c10);
+    }
+
+    #porthole .ck-corner.left {
+      left: calc(var(--bleed) + var(--pillar-w) - 7px);
+      transform: perspective(500px) rotateY(18deg);
+      transform-origin: left center;
+      border-right: 1px solid rgba(130, 175, 230, 0.28);
+    }
+
+    #porthole .ck-corner.right {
+      right: calc(var(--bleed) + var(--pillar-w) - 7px);
+      transform: perspective(500px) rotateY(-18deg);
+      transform-origin: right center;
+      border-left: 1px solid rgba(130, 175, 230, 0.28);
+    }
+
+    #porthole .ck-pillar-rib {
+      position: absolute;
+      left: 15%;
+      right: 18%;
+      top: 45%;
+      height: 8px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #080a0d, #425064, #080a0d);
+      box-shadow: 0 5px 12px rgba(0,0,0,0.6);
+    }
+
+    #porthole .ck-frame-top-lip {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 0.5%);
+      right: calc(var(--bleed) + var(--pillar-w) + 0.5%);
+      top: calc(var(--ceil-h) + var(--bleed) + 13px);
+      height: 16px;
+      z-index: 3;
+      background: linear-gradient(180deg, #202836, transparent);
+      clip-path: polygon(0 0, 100% 0, 97.5% 100%, 2.5% 100%);
+      transform: perspective(380px) rotateX(-35deg);
+      transform-origin: top center;
+    }
+
+    #porthole .ck-window-rail {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 3%);
+      right: calc(var(--bleed) + var(--pillar-w) + 3%);
+      top: calc(var(--ceil-h) + var(--bleed) + 12%);
+      height: 2px;
+      z-index: 2;
+      background: linear-gradient(90deg, transparent, rgba(100, 150, 210, 0.35), transparent);
+      opacity: 0.55;
+    }
+
+    #porthole .ck-console-back {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 0.2%);
+      right: calc(var(--bleed) + var(--pillar-w) + 0.2%);
+      bottom: calc(var(--bleed) + var(--floor-h) + var(--dash-h) + 4px);
+      height: var(--console-h);
+      z-index: 4;
+      background: linear-gradient(180deg, #0c121a, #040608);
+      border-radius: 12px;
+      transform: perspective(950px) rotateX(22deg) translateZ(-35px);
+      transform-origin: bottom center;
+      box-shadow: 0 35px 60px rgba(0, 0, 0, 0.85);
+    }
+
+    #porthole .ck-console-edge {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 3.5%);
+      right: calc(var(--bleed) + var(--pillar-w) + 3.5%);
+      bottom: calc(var(--bleed) + var(--floor-h) + var(--dash-h) + var(--console-h) + 1px);
+      height: 10px;
+      z-index: 6;
+      background: linear-gradient(180deg, #435166, #202936);
+      border-radius: 5px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.6);
+      transform: perspective(800px) rotateX(45deg);
+      transform-origin: bottom center;
+    }
+
+    #porthole .ck-seat-base {
+      position: absolute;
+      left: calc(var(--bleed) + 26%);
+      right: calc(var(--bleed) + 26%);
+      bottom: calc(var(--bleed) + var(--floor-h) + var(--dash-h) + var(--console-h) + 12px);
+      height: clamp(24px, 5vh, 50px);
+      z-index: 6;
+      background: radial-gradient(ellipse at 50% 0%, #222c3a 0%, #0a0d12 75%);
+      border-radius: 42% 42% 12% 12%;
+      box-shadow: 0 -10px 35px rgba(0, 0, 0, 0.65), inset 0 10px 20px rgba(0, 0, 0, 0.7);
+      transform: perspective(500px) rotateX(60deg);
+      transform-origin: bottom center;
+    }
+
+    #porthole .ck-ceiling {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: calc(var(--ceil-h) + var(--bleed));
+      padding-top: var(--bleed);
+      background: linear-gradient(180deg, #010204 0%, #151c26 60%, #0b0f16 100%);
+      border-bottom: 1.5px solid rgba(80, 105, 140, 0.4);
+      box-shadow:
+        0 25px 60px rgba(0, 0, 0, 0.85),
+        inset 0 -1px 0 rgba(95, 130, 180, 0.2),
+        inset 0 20px 35px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: space-evenly;
+      padding-left: 10%;
+      padding-right: 10%;
+      z-index: 4;
+      box-sizing: border-box;
+    }
+
+    #porthole .ck-ceiling-depth {
+      position: absolute;
+      left: 2.5%;
+      right: 2.5%;
+      bottom: -24px;
+      height: 24px;
+      background: linear-gradient(180deg, #283142, #0c0e14);
+      clip-path: polygon(0 0, 100% 0, 94.5% 100%, 5.5% 100%);
+      box-shadow: 0 18px 32px rgba(0, 0, 0, 0.75);
+    }
+
+    #porthole .ck-beam {
+      width: 16%;
+      height: 32%;
+      border-radius: 2px;
+      background: linear-gradient(180deg, rgba(180, 220, 255, 0.6), rgba(70, 130, 200, 0.15));
+      box-shadow: 0 0 22px rgba(90, 180, 255, 0.4);
+    }
+
+    #porthole .ck-beam.mid { width: 26%; opacity: 0.8; }
+
+    #porthole .ck-ceiling .ck-dot {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ck-glow);
+      box-shadow: 0 0 10px var(--ck-glow);
+      top: 65%;
+      z-index: 1;
+    }
+
+    #porthole .ck-ceiling .ck-dot:nth-of-type(1) { left: 14%; }
+    #porthole .ck-ceiling .ck-dot:nth-of-type(2) { left: 24%; }
+    #porthole .ck-ceiling .ck-dot:nth-of-type(3) { left: 34%; }
+    #porthole .ck-ceiling .ck-dot:nth-of-type(4) { right: 34%; left: auto; }
+    #porthole .ck-ceiling .ck-dot:nth-of-type(5) { right: 24%; left: auto; }
+    #porthole .ck-ceiling .ck-dot:nth-of-type(6) { right: 14%; left: auto; }
+
+    #porthole .ck-hull {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: calc(var(--bleed) + var(--pillar-w) + 45px);
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    #porthole .ck-hull.left {
+      left: 0;
+      background: linear-gradient(90deg, #010203 0%, #111721 35%, #1b2433 70%, transparent 100%);
+      box-shadow: inset -25px 0 40px rgba(0, 0, 0, 0.75);
+      transform: perspective(550px) rotateY(20deg);
+      transform-origin: left center;
+    }
+
+    #porthole .ck-hull.right {
+      right: 0;
+      background: linear-gradient(270deg, #010203 0%, #111721 35%, #1b2433 70%, transparent 100%);
+      box-shadow: inset 25px 0 40px rgba(0, 0, 0, 0.75);
+      transform: perspective(550px) rotateY(-20deg);
+      transform-origin: right center;
+    }
+
+    #porthole .ck-pillar {
+      position: absolute;
+      top: calc(var(--ceil-h) + var(--bleed) - 2px);
+      bottom: var(--bleed);
+      z-index: 5;
+    }
+
+    #porthole .ck-pillar.left {
+      left: 0;
+      padding-left: var(--bleed);
+      box-sizing: border-box;
+      width: calc(var(--bleed) + var(--pillar-w));
+      border-right: 1.5px solid rgba(100, 135, 180, 0.35);
+      background: linear-gradient(90deg, #030507 0%, #202938 60%, #0d1016 100%);
+      transform: perspective(750px) rotateY(12deg);
+      transform-origin: left center;
+    }
+
+    #porthole .ck-pillar.right {
+      right: 0;
+      padding-right: var(--bleed);
+      box-sizing: border-box;
+      width: calc(var(--bleed) + var(--pillar-w));
+      border-left: 1.5px solid rgba(100, 135, 180, 0.35);
+      background: linear-gradient(270deg, #030507 0%, #202938 60%, #0d1016 100%);
+      transform: perspective(750px) rotateY(-12deg);
+      transform-origin: right center;
+    }
+
+    #porthole .ck-pillar-face {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 18px;
+      background: linear-gradient(180deg, #323d52, #161b24 40%, #0c0e14);
+      box-shadow: inset -2px 0 0 rgba(140, 180, 230, 0.25);
+    }
+
+    #porthole .ck-pillar.left .ck-pillar-face { right: 0; }
+    #porthole .ck-pillar.right .ck-pillar-face { left: 0; }
+
+    #porthole .ck-sidewin {
+      position: absolute;
+      top: 10%;
+      width: 44%;
+      height: 36%;
+      background: rgba(10, 22, 38, 0.4);
+      border: 1.5px solid rgba(80, 115, 160, 0.45);
+      box-shadow:
+        inset 0 0 25px rgba(50, 110, 200, 0.3),
+        0 0 15px rgba(50, 140, 240, 0.15);
+    }
+
+    #porthole .ck-pillar.left .ck-sidewin { left: 16%; transform: skewY(-3deg); }
+    #porthole .ck-pillar.right .ck-sidewin { right: 16%; transform: skewY(3deg); }
+
+    #porthole .ck-panel {
+      position: absolute;
+      left: 14%;
+      right: 14%;
+      bottom: 16%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 10px 8px;
+      background: linear-gradient(180deg, #202736, #0f131a);
+      border: 1px solid rgba(70, 95, 130, 0.45);
+      border-radius: 5px;
+      box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.85);
+      transform: translateZ(12px);
+    }
+
+    #porthole .ck-panel span {
+      height: 10px;
+      border-radius: 2px;
+      background: linear-gradient(180deg, #323d52, #1b212b);
+      border: 1px solid rgba(95, 115, 145, 0.3);
+    }
+
+    #porthole .ck-panel span.led {
+      height: 8px;
+      width: 8px;
+      border-radius: 50%;
+      justify-self: center;
+      border: none;
+    }
+
+    #porthole .ck-panel span.led.r { background: #ff4d4d; box-shadow: 0 0 10px #ff4d4d; }
+    #porthole .ck-panel span.led.g { background: #4dff88; box-shadow: 0 0 10px #4dff88; }
+    #porthole .ck-panel span.led.b { background: var(--ck-glow); box-shadow: 0 0 10px var(--ck-glow); }
+
+    #porthole .ck-frame-top {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w));
+      right: calc(var(--bleed) + var(--pillar-w));
+      top: calc(var(--bleed) + var(--ceil-h));
+      height: 14px;
+      z-index: 3;
+      background: linear-gradient(180deg, #2b3445 0%, #161b24 55%, #0a0d12 100%);
+      border-bottom: 1.5px solid rgba(110, 160, 220, 0.4);
+      box-shadow: 0 12px 25px rgba(0, 0, 0, 0.65), inset 0 2px 0 rgba(160, 200, 255, 0.15);
+      clip-path: polygon(1.2% 0, 98.8% 0, 100% 100%, 0 100%);
+    }
+
+    #porthole .ck-frame-bot {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w));
+      right: calc(var(--bleed) + var(--pillar-w));
+      top: var(--win-bot);
+      height: 16px;
+      z-index: 3;
+      background: linear-gradient(180deg, #0a0d12 0%, #222c3b 50%, #10141c 100%);
+      border-top: 1.5px solid rgba(85, 130, 185, 0.5);
+      box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.6);
+    }
+
+    #porthole .ck-sill {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w));
+      right: calc(var(--bleed) + var(--pillar-w));
+      top: calc(var(--win-bot) + 12px);
+      height: 16px;
+      z-index: 4;
+      background: linear-gradient(180deg, #323d4f, #181d26 70%, #0f1218);
+      border-bottom: 1px solid rgba(50, 70, 105, 0.55);
+      box-shadow: inset 0 2px 0 rgba(120, 170, 240, 0.18), 0 12px 22px rgba(0, 0, 0, 0.5);
+    }
+
+    #porthole .ck-sill::before,
+    #porthole .ck-sill::after {
+      content: '';
+      position: absolute;
+      top: 35%;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ck-glow);
+      box-shadow: 0 0 12px var(--ck-glow);
+    }
+    #porthole .ck-sill::before { left: 7%; }
+    #porthole .ck-sill::after { right: 7%; }
+
+    #porthole .ck-sill-lip {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 1.8%);
+      right: calc(var(--bleed) + var(--pillar-w) + 1.8%);
+      top: calc(var(--win-bot) + 26px);
+      height: 12px;
+      z-index: 4;
+      background: linear-gradient(180deg, #0c0f14, #06080b);
+      clip-path: polygon(0 0, 100% 0, 96.5% 100%, 3.5% 100%);
+      box-shadow: 0 12px 20px rgba(0, 0, 0, 0.55);
+      transform: perspective(500px) rotateX(30deg);
+      transform-origin: top center;
+    }
+
+    #porthole .ck-bulkhead {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w));
+      right: calc(var(--bleed) + var(--pillar-w));
+      top: var(--win-bot);
+      bottom: calc(var(--bleed) + var(--floor-h));
+      z-index: 3;
+      background: linear-gradient(180deg, #1b2230 0%, #0d1017 40%, #07090d 100%);
+      box-shadow: inset 0 35px 70px rgba(0, 0, 0, 0.65);
+    }
+
+    #porthole .ck-console-body {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 1.2%);
+      right: calc(var(--bleed) + var(--pillar-w) + 1.2%);
+      bottom: calc(var(--bleed) + var(--floor-h) + var(--dash-h) + 2px);
+      height: var(--console-h);
+      z-index: 5;
+      background: linear-gradient(180deg, #222b3a 0%, #131a26 35%, #090c12 100%);
+      border: 1px solid rgba(85, 115, 155, 0.4);
+      border-radius: 10px 10px 16px 16px;
+      box-shadow:
+        0 25px 55px rgba(0, 0, 0, 0.8),
+        inset 0 2px 0 rgba(160, 200, 255, 0.12),
+        inset 0 -30px 50px rgba(0, 0, 0, 0.6);
+      transform: perspective(1000px) rotateX(20deg);
+      transform-origin: bottom center;
+    }
+
+    #porthole .ck-dash {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w) + 2%);
+      right: calc(var(--bleed) + var(--pillar-w) + 2%);
+      bottom: calc(var(--bleed) + var(--floor-h) + 1px);
+      height: var(--dash-h);
+      z-index: 6;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: clamp(5px, 0.7vw, 12px);
+      padding: 10px 12px 12px;
+      background: transparent;
+      transform: perspective(1000px) rotateX(20deg);
+      transform-origin: bottom center;
+    }
+
+    #porthole .ck-screen {
+      flex: 1 1 0;
+      max-width: 12%;
+      aspect-ratio: 5 / 4;
+      border-radius: 5px;
+      background: #010408;
+      border: 1.5px solid rgba(60, 150, 240, 0.55);
+      box-shadow:
+        0 0 16px rgba(40, 150, 255, 0.22),
+        0 8px 16px rgba(0, 0, 0, 0.55),
+        inset 0 0 22px rgba(20, 90, 180, 0.4);
+      overflow: hidden;
+      position: relative;
+    }
+
+    #porthole .ck-screen::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(190, 230, 255, 0.15), transparent 45%);
+      pointer-events: none;
+    }
+
+    #porthole .ck-screen canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #porthole .ck-screen.s3,
+    #porthole .ck-screen.s5,
+    #porthole .ck-screen.s7 {
+      max-width: 14%;
+      transform: translateY(-5px);
+    }
+
+    #porthole .ck-screen.s2,
+    #porthole .ck-screen.s4,
+    #porthole .ck-screen.s6,
+    #porthole .ck-screen.s8 {
+      max-width: 9.8%;
+      transform: translateY(10px);
+    }
+
+    #porthole .ck-floor {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: calc(var(--bleed) + var(--floor-h));
+      z-index: 5;
+      background: linear-gradient(180deg, #0f131a 0%, #07090f 40%, #010204 100%);
+      box-shadow: inset 0 28px 45px rgba(0, 0, 0, 0.65);
+    }
+
+    #porthole .ck-floor-lip {
+      position: absolute;
+      left: calc(var(--bleed) + 8%);
+      right: calc(var(--bleed) + 8%);
+      bottom: calc(var(--bleed) + clamp(24px, 5vh, 62px));
+      height: 18px;
+      z-index: 6;
+      background: linear-gradient(180deg, #202938, #0d1017);
+      clip-path: polygon(2.5% 0, 97.5% 0, 100% 100%, 0 100%);
+      box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.6);
+      transform: perspective(400px) rotateX(-28deg);
+      transform-origin: bottom center;
+    }
+
+    #porthole .ck-floor::before {
+      content: '';
+      position: absolute;
+      left: calc(var(--bleed) + 16%);
+      right: calc(var(--bleed) + 16%);
+      top: 25%;
+      height: 3px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, rgba(90, 170, 255, 0.4), transparent);
+      box-shadow: 0 0 18px rgba(70, 160, 255, 0.4);
+    }
+
+    #porthole .ck-window-glow {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w));
+      right: calc(var(--bleed) + var(--pillar-w));
+      top: calc(var(--bleed) + var(--ceil-h));
+      height: calc(var(--win-bot) - var(--bleed) - var(--ceil-h) + 16px);
+      z-index: 1;
+      box-shadow:
+        inset 0 0 70px rgba(0, 0, 0, 0.45),
+        inset 0 0 0 1.5px rgba(110, 160, 220, 0.22);
+      clip-path: polygon(1.2% 0, 98.8% 0, 100% 100%, 0 100%);
+      pointer-events: none;
+    }
+
+    #porthole .ck-glass {
+      position: absolute;
+      left: calc(var(--bleed) + var(--pillar-w));
+      right: calc(var(--bleed) + var(--pillar-w));
+      top: calc(var(--bleed) + var(--ceil-h));
+      height: calc(var(--win-bot) - var(--bleed) - var(--ceil-h) + 16px);
+      z-index: 2;
+      background:
+        linear-gradient(125deg,
+          rgba(170, 210, 255, 0.12) 0%,
+          transparent 30%,
+          transparent 65%,
+          rgba(110, 160, 240, 0.06) 100%);
+      mix-blend-mode: screen;
+      opacity: 0.75;
+      clip-path: polygon(1.2% 0, 98.8% 0, 100% 100%, 0 100%);
+      pointer-events: none;
+    }
+
+    body.flying #porthole .ck-glass {
+      opacity: 0.82;
+    }
+
+    body.flying #porthole .ck-sill::before,
+    body.flying #porthole .ck-sill::after {
+      animation: ck-led-pulse 2.4s ease-in-out infinite;
+    }
+
+    @keyframes ck-led-pulse {
+      0%, 100% { opacity: 0.8; }
+      50% { opacity: 1; box-shadow: 0 0 18px var(--ck-glow); }
+    }
+
+    body.warping #porthole .ck-glass {
+      opacity: 1;
+      background:
+        linear-gradient(125deg,
+          rgba(130, 195, 255, 0.22) 0%,
+          transparent 25%,
+          rgba(70, 150, 255, 0.08) 65%,
+          rgba(110, 195, 255, 0.15) 100%);
+    }
+
+    body.warping #porthole .ck-screen {
+      box-shadow:
+        0 0 25px rgba(60, 180, 255, 0.4),
+        inset 0 0 25px rgba(40, 130, 240, 0.5);
+    }
+
+    body.warping #porthole .ck-beam {
+      opacity: 0.95;
+      box-shadow: 0 0 32px rgba(110, 200, 255, 0.6);
+    }
+
+    @media (max-width: 700px) {
+      #porthole {
+        --bleed: 36px;
+        --dash-h: clamp(75px, 14vh, 115px);
+        --console-h: clamp(90px, 17vh, 135px);
+        --floor-h: clamp(24px, 5vh, 52px);
+        --pillar-w: 52px;
+      }
+      #porthole .ck-hull,
+      #porthole .ck-tunnel,
+      #porthole .ck-overhead,
+      #porthole .ck-seat-base,
+      #porthole .ck-nose,
+      #porthole .ck-arch.mid { display: none; }
+      #porthole .ck-panel { display: none; }
+      #porthole .ck-screen.s8,
+      #porthole .ck-screen.s9,
+      #porthole .ck-screen.s1 { display: none; }
+    }
+
+    #hud {
+      pointer-events: none;
+      z-index: 20;
+      transition: opacity 0.25s ease;
+    }
+
+    body.hud-hidden #hud {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none !important;
+    }
+
+    /* Keep flight stick usable when HUD info is hidden */
+    body.hud-hidden #mobile-pad .joy-zone,
+    body.hud-hidden #mobile-pad .mob-btns {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    #hud-toggle {
+      position: fixed;
+      z-index: 40;
+      top: max(10px, env(safe-area-inset-top));
+      left: max(10px, env(safe-area-inset-left));
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(160, 200, 255, 0.35);
+      background: rgba(8, 14, 32, 0.72);
+      color: #eaf2ff;
+      font-size: 1.1rem;
+      pointer-events: auto;
+      touch-action: manipulation;
+      backdrop-filter: blur(10px);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    #hud-toggle:active {
+      background: rgba(255, 160, 60, 0.45);
+    }
+
+    .panel {
+      pointer-events: auto;
+      background: rgba(4, 8, 20, 0.68);
+      border: 1px solid rgba(140, 180, 255, 0.2);
+      backdrop-filter: blur(12px);
+      border-radius: 14px;
+      padding: 14px 16px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    #mode {
+      position: absolute;
+      top: max(24px, calc(env(safe-area-inset-top) + 8px));
+      right: max(24px, calc(env(safe-area-inset-right) + 8px));
+      max-width: min(360px, calc(100vw - 160px));
+      text-align: right;
+      font-size: 0.78rem;
+      color: #8dffb0;
+      min-height: 1.2em;
+      text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    #atmo-veil {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 5;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      background:
+        radial-gradient(ellipse at center, transparent 35%, rgba(20, 40, 80, 0.55) 100%),
+        linear-gradient(180deg, rgba(120, 180, 255, 0.12), transparent 40%, rgba(255, 140, 60, 0.1));
+      mix-blend-mode: screen;
+    }
+
+    #atmo-veil.active { opacity: 1; }
+
+    #warp-veil {
+      z-index: 4;
+      pointer-events: none;
+      opacity: 0;
+      background:
+        radial-gradient(ellipse at center, transparent 40%, rgba(40, 120, 255, 0.06) 78%, rgba(80, 160, 255, 0.14) 100%);
+      mix-blend-mode: screen;
+      transition: opacity 0.08s linear;
+    }
+
+    #warp-veil.hot {
+      background:
+        radial-gradient(ellipse at center, transparent 35%, rgba(60, 140, 255, 0.1) 75%, rgba(120, 200, 255, 0.18) 100%);
+    }
+
+    #planet-info {
+      position: absolute;
+      bottom: clamp(100px, 22vh, 180px);
+      right: max(20px, env(safe-area-inset-right));
+      min-width: 200px;
+      max-width: min(280px, calc(100vw - 40px));
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      z-index: 2;
+    }
+
+    #planet-info.visible { opacity: 1; transform: translateY(0); }
+
+    #planet-info h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1rem;
+      margin-bottom: 6px;
+      color: #ffe8b0;
+    }
+
+    #planet-info p { font-size: 0.82rem; opacity: 0.82; line-height: 1.45; }
+
+    #hint {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      padding: 22px 28px;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    #hint.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) scale(0.96);
+    }
+
+    #hint h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.1rem;
+      margin-bottom: 10px;
+      color: #ffd27a;
+    }
+
+    #hint p { opacity: 0.8; font-size: 0.9rem; margin-bottom: 14px; }
+
+    #hint .cta {
+      display: inline-block;
+      padding: 10px 18px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #ffb347, #ff8c2a);
+      color: #1a0f00;
+      font-weight: 600;
+      font-size: 0.88rem;
+      border: none;
+      cursor: pointer;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+
+    #loading {
+      display: grid;
+      place-items: center;
+      background: #000;
+      z-index: 30;
+      transition: opacity 0.5s ease;
+    }
+
+    #loading.done { opacity: 0; pointer-events: none; }
+
+    #loading .box { text-align: center; }
+    #loading h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1rem;
+      letter-spacing: 0.1em;
+      margin-bottom: 14px;
+      color: #ffd27a;
+    }
+
+    #loading .bar {
+      width: 220px;
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    #loading .fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #ff9f43, #ffe29a);
+      transition: width 0.2s ease;
+    }
+
+    .row { margin: 3px 0; }
+
+    /* ---- Mobile touch controls ---- */
+    #mobile-pad {
+      display: none;
+      z-index: 12;
+      pointer-events: none;
+    }
+
+    #mobile-pad.active { display: block; }
+
+    .joy-zone {
+      position: absolute;
+      left: max(12px, env(safe-area-inset-left));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      width: 148px;
+      height: 148px;
+      pointer-events: auto;
+      touch-action: none;
+    }
+
+    .joy-base {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: rgba(10, 18, 40, 0.45);
+      border: 2px solid rgba(160, 200, 255, 0.28);
+      position: relative;
+    }
+
+    .joy-knob {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 58px;
+      height: 58px;
+      margin: -29px 0 0 -29px;
+      border-radius: 50%;
+      background: rgba(255, 200, 100, 0.55);
+      border: 2px solid rgba(255, 230, 180, 0.7);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+      will-change: transform;
+    }
+
+    .mob-btns {
+      position: absolute;
+      right: max(12px, env(safe-area-inset-right));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      display: grid;
+      grid-template-columns: repeat(2, clamp(48px, 12vw, 58px));
+      gap: 8px;
+      pointer-events: auto;
+      max-height: 45vh;
+    }
+
+    .mob-btn {
+      width: clamp(48px, 12vw, 58px);
+      height: clamp(48px, 12vw, 58px);
+      border-radius: 14px;
+      border: 1px solid rgba(160, 200, 255, 0.3);
+      background: rgba(8, 14, 32, 0.72);
+      color: #eaf2ff;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      display: grid;
+      place-items: center;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    #btn-look.pressed {
+      background: rgba(60, 160, 255, 0.55);
+      border-color: rgba(120, 200, 255, 0.85);
+    }
+
+    .mob-btn:active, .mob-btn.pressed {
+      background: rgba(255, 160, 60, 0.45);
+      border-color: rgba(255, 200, 120, 0.7);
+    }
+
+    .mob-btn.wide {
+      grid-column: span 2;
+      height: 48px;
+      border-radius: 14px;
+    }
+
+    #look-zone {
+      position: absolute;
+      inset: 0;
+      pointer-events: auto;
+      touch-action: none;
+    }
+
+    @media (max-width: 700px) {
+      #planet-info {
+        left: max(10px, env(safe-area-inset-left));
+        right: max(10px, env(safe-area-inset-right));
+        bottom: 190px;
+        max-width: none;
+        padding: 10px 12px;
+      }
+    }
+
+    @media (pointer: fine) {
+      #mobile-pad { display: none !important; }
+    }

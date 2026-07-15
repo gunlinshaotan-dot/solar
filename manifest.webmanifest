@@ -1,0 +1,11 @@
+{
+  "name": "Solar Nemesis",
+  "short_name": "Solar",
+  "description": "3D полёт по Солнечной системе",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "lang": "ru"
+}
