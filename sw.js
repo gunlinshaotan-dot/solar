@@ -1,5 +1,5 @@
 /* Solar Nemesis — offline / fast-load cache for GitHub Pages */
-const CACHE = 'solar-nemesis-v2';
+const CACHE = 'solar-nemesis-v3';
 const PRECACHE = [
   './',
   './index.html',

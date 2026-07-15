@@ -965,11 +965,13 @@
     /* ---- Mobile touch controls ---- */
     #mobile-pad {
       display: none;
-      z-index: 12;
+      z-index: 30;
       pointer-events: none;
     }
 
-    #mobile-pad.active { display: block; }
+    #mobile-pad.active {
+      display: block !important;
+    }
 
     .joy-zone {
       position: absolute;
@@ -979,6 +981,7 @@
       height: 148px;
       pointer-events: auto;
       touch-action: none;
+      z-index: 3;
     }
 
     .joy-base {
@@ -1002,6 +1005,7 @@
       border: 2px solid rgba(255, 230, 180, 0.7);
       box-shadow: 0 4px 16px rgba(0,0,0,0.35);
       will-change: transform;
+      pointer-events: none;
     }
 
     .mob-btns {
@@ -1009,18 +1013,18 @@
       right: max(12px, env(safe-area-inset-right));
       bottom: max(18px, env(safe-area-inset-bottom));
       display: grid;
-      grid-template-columns: repeat(2, clamp(48px, 12vw, 58px));
-      gap: 8px;
+      grid-template-columns: repeat(2, clamp(52px, 13vw, 64px));
+      gap: 10px;
       pointer-events: auto;
-      max-height: 45vh;
+      z-index: 4;
     }
 
     .mob-btn {
-      width: clamp(48px, 12vw, 58px);
-      height: clamp(48px, 12vw, 58px);
+      width: clamp(52px, 13vw, 64px);
+      height: clamp(52px, 13vw, 64px);
       border-radius: 14px;
       border: 1px solid rgba(160, 200, 255, 0.3);
-      background: rgba(8, 14, 32, 0.72);
+      background: rgba(8, 14, 32, 0.82);
       color: #eaf2ff;
       font-family: 'Orbitron', sans-serif;
       font-size: 0.72rem;
@@ -1030,6 +1034,7 @@
       touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
       user-select: none;
+      z-index: 5;
     }
 
     #btn-look.pressed {
@@ -1053,6 +1058,7 @@
       inset: 0;
       pointer-events: auto;
       touch-action: none;
+      z-index: 1;
     }
 
     @media (max-width: 700px) {
@@ -1065,6 +1071,7 @@
       }
     }
 
-    @media (pointer: fine) {
-      #mobile-pad { display: none !important; }
+    /* Only hide pad on real desktops — NOT Android that reports pointer:fine */
+    @media (hover: hover) and (pointer: fine) and (min-width: 900px) {
+      body:not(.mobile-play) #mobile-pad { display: none !important; }
     }

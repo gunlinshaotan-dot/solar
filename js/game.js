@@ -36,17 +36,17 @@ import * as THREE from 'three';
     const SUN_OVERVIEW = new THREE.Vector3(0, AU * 0.55, AU * 2.8);
 
     const renderer = new THREE.WebGLRenderer({
-      antialias: !(/Android/i.test(navigator.userAgent)),
+      antialias: true,
       powerPreference: 'high-performance',
       stencil: false,
       // Huge solar-system scale — without this, depth precision causes flicker when turning
       logarithmicDepthBuffer: true,
     });
     {
+      // Keep phone sharpness — only lightly cap extreme 3x DPR panels
       const touchy = ('ontouchstart' in window) || navigator.maxTouchPoints > 0
         || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-      const android = /Android/i.test(navigator.userAgent);
-      renderer.setPixelRatio(Math.min(devicePixelRatio, touchy ? (android ? 1.25 : 1.5) : 2));
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, touchy ? 2 : 2));
     }
     renderer.setSize(innerWidth, innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -554,13 +554,14 @@ import * as THREE from 'three';
     }
 
 
-    const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0
+      || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     const isAndroid = /Android/i.test(navigator.userAgent);
-    const isMobileUA = isTouch || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-    // Refresh PR (already set earlier) and lighten post on phones
+    const isMobileUA = isTouch;
+    // Light bloom only — do not crush resolution/quality on phones
     if (isMobileUA) {
-      bloomPass.strength = isAndroid ? 0.12 : 0.16;
-      bloomPass.threshold = 0.995;
+      bloomPass.strength = 0.18;
+      bloomPass.threshold = 0.985;
     }
 
     const mobilePad = document.getElementById('mobile-pad');
@@ -569,16 +570,18 @@ import * as THREE from 'three';
     const mobileMove = { x: 0, z: 0 };
 
     if (isTouch && hintText) {
-      hintText.textContent = 'Нажмите «Начать полёт». Джойстик — тяга · свайп — поворот · 👁 — осмотр кабины · ⚡ — варп · ВЗЛЁТ — с поверхности.';
+      hintText.textContent = 'Нажмите «Начать полёт». Джойстик — тяга · свайп — поворот · ⚡ зажать — ускорение · 👁 — осмотр кабины · ⛶ — полный экран.';
     }
 
     function startPlay() {
       if (isTouch) {
         mobilePlaying = true;
+        document.body.classList.add('mobile-play');
         mobilePad.classList.add('active');
         hint.classList.add('hidden');
         requestAppFullscreen();
-        fitAppViewport();
+        lockLandscape();
+        scheduleFitViewport();
       } else {
         controls.lock();
       }
@@ -590,10 +593,16 @@ import * as THREE from 'three';
 
     function fitAppViewport(force) {
       const vv = window.visualViewport;
-      // Prefer visualViewport; on Android rotate, briefly falls back to screen dims
-      let w = Math.round(vv?.width || window.innerWidth || document.documentElement.clientWidth || 1);
-      let h = Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 1);
-      // After orientation flip some Android Chrome builds report swapped/stale values once
+      const fs = !!document.fullscreenElement;
+      // Prefer visualViewport; in fullscreen use full screen box so Android fills the panel
+      let w = Math.round(
+        fs ? (window.innerWidth || screen.width)
+          : (vv?.width || window.innerWidth || document.documentElement.clientWidth || 1)
+      );
+      let h = Math.round(
+        fs ? (window.innerHeight || screen.height)
+          : (vv?.height || window.innerHeight || document.documentElement.clientHeight || 1)
+      );
       if (screen.orientation?.type) {
         const landscape = screen.orientation.type.startsWith('landscape');
         if (landscape && w < h) { const t = w; w = h; h = t; }
@@ -631,10 +640,23 @@ import * as THREE from 'three';
     async function requestAppFullscreen() {
       const el = document.documentElement;
       try {
-        if (document.fullscreenElement) return;
-        if (el.requestFullscreen) await el.requestFullscreen();
-        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        if (!document.fullscreenElement) {
+          if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+          else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        }
       } catch (_) { /* user gesture / unsupported */ }
+      await lockLandscape();
+      // Hide Android Chrome chrome: scroll + refit
+      try { window.scrollTo(0, 1); } catch (_) {}
+      scheduleFitViewport();
+    }
+
+    async function lockLandscape() {
+      try {
+        if (screen.orientation?.lock) {
+          await screen.orientation.lock('landscape');
+        }
+      } catch (_) { /* needs fullscreen / not allowed */ }
     }
 
     function toggleHud() {
@@ -1544,12 +1566,29 @@ import * as THREE from 'three';
       lookZone.addEventListener('pointercancel', () => { lookState.id = null; });
 
       function bindHold(btn, code) {
-        const on = (e) => { e.preventDefault(); e.stopPropagation(); btn.classList.add('pressed'); keys[code] = true; };
-        const off = (e) => { e.preventDefault(); e.stopPropagation(); btn.classList.remove('pressed'); keys[code] = false; };
+        if (!btn) return;
+        const on = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+          btn.classList.add('pressed');
+          keys[code] = true;
+          // Shift often comes as ShiftLeft only — mirror for warp
+          if (code === 'ShiftLeft') keys.ShiftRight = true;
+        };
+        const off = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          try { if (btn.hasPointerCapture?.(e.pointerId)) btn.releasePointerCapture(e.pointerId); } catch (_) {}
+          btn.classList.remove('pressed');
+          keys[code] = false;
+          if (code === 'ShiftLeft') keys.ShiftRight = false;
+        };
         btn.addEventListener('pointerdown', on);
         btn.addEventListener('pointerup', off);
-        btn.addEventListener('pointerleave', off);
         btn.addEventListener('pointercancel', off);
+        btn.addEventListener('lostpointercapture', off);
+        // Do NOT use pointerleave — Android fires it while finger still held
       }
 
       bindHold(document.getElementById('btn-up'), 'Space');
@@ -1565,6 +1604,7 @@ import * as THREE from 'three';
           const on = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            try { btnLook.setPointerCapture(e.pointerId); } catch (_) {}
             mobileLookHeld = true;
             btnLook.classList.add('pressed');
             if (modeEl) modeEl.textContent = 'Осмотр кабины · 👁';
@@ -1578,8 +1618,8 @@ import * as THREE from 'three';
           };
           btnLook.addEventListener('pointerdown', on);
           btnLook.addEventListener('pointerup', off);
-          btnLook.addEventListener('pointerleave', off);
           btnLook.addEventListener('pointercancel', off);
+          btnLook.addEventListener('lostpointercapture', off);
         }
       }
 
@@ -1588,7 +1628,6 @@ import * as THREE from 'three';
         e.stopPropagation();
         if (landed) detachFromPlanet();
         else if (focusedBody) {
-          // Soft upward nudge while already flying near a planet
           focusedBody.mesh.getWorldPosition(tmpWorld);
           takeoffNormal.copy(ship.position).sub(tmpWorld).normalize();
           verticalVel = Math.max(verticalVel, SPEED_NORMAL * 0.5);
@@ -1599,7 +1638,6 @@ import * as THREE from 'three';
         e.preventDefault();
         e.stopPropagation();
         requestAppFullscreen();
-        fitAppViewport();
       });
 
       document.addEventListener('gesturestart', (e) => e.preventDefault());
