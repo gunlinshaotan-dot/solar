@@ -24,7 +24,7 @@
       document.write('<base href="' + window.__BASE__ + '">');
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=47" />
   <script type="importmap">
   {
     "imports": {
@@ -169,14 +169,15 @@
       <div class="joy-base"><div class="joy-knob" id="joy-knob"></div></div>
     </div>
     <div class="mob-btns">
-      <button class="mob-btn" type="button" id="btn-up">↑</button>
-      <button class="mob-btn" type="button" id="btn-boost">⚡</button>
-      <button class="mob-btn" type="button" id="btn-down">↓</button>
-      <button class="mob-btn" type="button" id="btn-slow">🐢</button>
-      <button class="mob-btn" type="button" id="btn-look" title="Осмотр кабины">👁</button>
-      <button class="mob-btn" type="button" id="btn-brake" title="Тормоз">✕</button>
-      <button class="mob-btn wide" type="button" id="btn-launch">ВЗЛЁТ / F</button>
-      <button class="mob-btn wide" type="button" id="btn-fs">⛶ Экран</button>
+      <button class="mob-btn" type="button" id="btn-up" aria-label="Вверх">↑</button>
+      <button class="mob-btn boost" type="button" id="btn-boost" aria-label="Ускорение">⚡</button>
+      <button class="mob-btn" type="button" id="btn-down" aria-label="Вниз">↓</button>
+      <button class="mob-btn brake" type="button" id="btn-brake" aria-label="Тормоз">✕</button>
+      <button class="mob-btn" type="button" id="btn-look" title="Осмотр" aria-label="Осмотр">👁</button>
+      <button class="mob-btn ghost" type="button" id="btn-fs" aria-label="Экран">⛶</button>
+      <button class="mob-btn wide seat" type="button" id="btn-seat">ВСТАТЬ</button>
+      <button class="mob-btn wide" type="button" id="btn-launch">ВЗЛЁТ</button>
+      <button class="mob-btn" type="button" id="btn-slow" aria-label="Тормоз" hidden>🐢</button>
     </div>
   </div>
 
@@ -202,13 +203,13 @@
 
     <div id="hint" class="panel hidden">
       <h2>Пробуждение</h2>
-      <p id="hint-text">Вы в кресле пилота. Мышь — поворот · Alt — осмотр + прицел · ЛКМ по кнопке · F — встать/сесть · WASD — тяга / ходьба · Shift — ускорение · M / NAV — карта и варп · HYPER — прицел · Q/E — крен · X — тормоз.</p>
+      <p id="hint-text">Вы в кресле пилота. Мышь — поворот · Alt — осмотр + прицел · ЛКМ по кнопке · F — встать/сесть · W — тяга (+50/с, старт 100 → макс 50 000) · Shift — тяга ×3 · S/X — тормоз (−1000/с) · A/D — крен · Space/Ctrl — вверх/вниз · M / NAV — карта и варп · HYPER — прицел · Q/E — крен.</p>
       <button class="cta" type="button">Взять штурвал</button>
     </div>
     <div id="resume-tip" class="hidden" aria-hidden="true">Кликните, чтобы снова управлять мышью</div>
   </div>
 
-  <script type="module" src="js/game.js?v=26"></script>
+  <script type="module" src="js/game.js?v=47"></script>
   <script>
     (function () {
       var host = location.hostname;

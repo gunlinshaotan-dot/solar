@@ -12,7 +12,7 @@ import * as THREE from 'three';
 
     // Browser + Three.js memory cache — assets stay hot after first load
     THREE.Cache.enabled = true;
-    const HTTP_CACHE = 'solar-nemesis-v26';
+    const HTTP_CACHE = 'solar-nemesis-v47';
     const LOCAL_ASSETS = [
       'index.html',
       'css/style.css',
@@ -194,7 +194,7 @@ import * as THREE from 'three';
       // Keep phone sharpness — only lightly cap extreme 3x DPR panels
       const touchy = ('ontouchstart' in window) || navigator.maxTouchPoints > 0
         || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, touchy ? 1.75 : 1.75));
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, touchy ? 1.6 : 1.25));
     }
     renderer.setSize(innerWidth, innerHeight, false);
     renderer.domElement.style.width = '100%';
@@ -280,9 +280,11 @@ import * as THREE from 'three';
     };
 
     const warpPass = new ShaderPass(WarpShader);
+    warpPass.enabled = false;
     composer.addPass(warpPass);
 
     const fxaaPass = new ShaderPass(FXAAShader);
+    fxaaPass.enabled = false; // fullscreen AA costs a full pass — skip for FPS
     {
       const pr = renderer.getPixelRatio();
       fxaaPass.material.uniforms.resolution.value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr));
@@ -354,6 +356,8 @@ import * as THREE from 'three';
       // Cockpit door frames (wide opening)
       { minX: -2.1, maxX: -1.15, minZ: 1.95, maxZ: 2.4 },
       { minX: 1.15, maxX: 2.1, minZ: 1.95, maxZ: 2.4 },
+      // Auto-door leaf (cockpit ↔ corridor) — inactive when open
+      { minX: -1.05, maxX: 1.05, minZ: 2.0, maxZ: 2.3, doorId: 'cockpit' },
     ];
     const HAB_COLLIDERS = [
       // Sleep cabin — bed + locker (walk-in aisle open at ~x −1.2…−0.85)
@@ -363,9 +367,11 @@ import * as THREE from 'three';
       // Right engineering racks (fore / aft — middle open for observation window)
       { minX: 1.35, maxX: 2.0, minZ: 3.7, maxZ: 4.45 },
       { minX: 1.35, maxX: 2.0, minZ: 6.65, maxZ: 7.7 },
-      // Door 05
+      // Door 05 frames
       { minX: -2.1, maxX: -1.05, minZ: 8.0, maxZ: 8.4 },
       { minX: 1.05, maxX: 2.1, minZ: 8.0, maxZ: 8.4 },
+      // Auto-door leaf (corridor ↔ cargo)
+      { minX: -1.05, maxX: 1.05, minZ: 8.05, maxZ: 8.35, doorId: 'cargo' },
       // Cargo crates (sides of bay, center aisle clear)
       { minX: -1.7, maxX: -0.7, minZ: 9.0, maxZ: 10.3 },
       { minX: -1.5, maxX: -0.65, minZ: 10.5, maxZ: 11.6 },
@@ -375,6 +381,54 @@ import * as THREE from 'three';
       { minX: -2.0, maxX: -1.55, minZ: 8.9, maxZ: 12.4 },
       { minX: 1.55, maxX: 2.0, minZ: 8.9, maxZ: 12.4 },
     ];
+    /** @type {{ id: string, z: number, openAmt: number, trigger: number, left: THREE.Mesh, right: THREE.Mesh, xClosedL: number, xOpenL: number, xClosedR: number, xOpenR: number }[]} */
+    const autoDoors = [];
+    const doorOpenState = Object.create(null);
+    const hudGlassVisPos = new THREE.Vector3();
+    const hudGlassVisNorm = new THREE.Vector3();
+    const hudGlassVisCam = new THREE.Vector3();
+    const hudGlassVisDir = new THREE.Vector3();
+    const hudGlassVisLook = new THREE.Vector3();
+
+    /** Forward rubka — aft of this Z is corridor / berths / cargo (hab windows) */
+    const COCKPIT_ZONE_MAX_Z = 2.08;
+
+    function isInCaptainCockpit() {
+      return head.position.z < COCKPIT_ZONE_MAX_Z;
+    }
+
+    /** Flight HUD is drawn on the windshield mesh — visible only when you look at the glass */
+    function canSeeHudGlass() {
+      const glass = cockpitRoot?.userData.hudGlass;
+      if (!glass) return false;
+      glass.updateWorldMatrix(true, false);
+      glass.getWorldPosition(hudGlassVisPos);
+      hudGlassVisNorm.set(0, 0, 1).transformDirection(glass.matrixWorld).normalize();
+      camera.getWorldPosition(hudGlassVisCam);
+      hudGlassVisDir.copy(hudGlassVisPos).sub(hudGlassVisCam);
+      const dist = hudGlassVisDir.length();
+      if (dist < 0.25 || dist > 14) return false;
+      hudGlassVisDir.multiplyScalar(1 / dist);
+      camera.getWorldDirection(hudGlassVisLook);
+      if (hudGlassVisDir.dot(hudGlassVisLook) < 0.32) return false;
+      if (hudGlassVisNorm.dot(hudGlassVisLook) > -0.1) return false;
+      return true;
+    }
+
+    function shouldShowHudGlass() {
+      if (!cockpitRoot?.visible || landed) return false;
+      if (!isPlaying() || !isShipPowered()) return false;
+      if (document.body.classList.contains('hud-hidden')) return false;
+      return canSeeHudGlass();
+    }
+
+    function updateHudGlassVisibility() {
+      if (!cockpitRoot) return;
+      const glass = cockpitRoot.userData.hudGlass;
+      if (!glass) return;
+      const want = shouldShowHudGlass();
+      if (glass.visible !== want) glass.visible = want;
+    }
     const walkDir = new THREE.Vector3();
     const walkFwd = new THREE.Vector3();
     const walkRight = new THREE.Vector3();
@@ -390,20 +444,20 @@ import * as THREE from 'three';
 
     function updateWalkBob(dt, moving) {
       const target = moving ? 1 : 0;
-      walkBobAmt = THREE.MathUtils.damp(walkBobAmt, target, moving ? 7 : 8, dt);
+      walkBobAmt = THREE.MathUtils.damp(walkBobAmt, target, moving ? 6 : 9, dt);
       if (walkBobAmt > 0.008) {
-        // Soft steps ~1.1 Hz — light figure-8, minimal camera lean
-        walkBobPhase += dt * (6.2 + walkBobAmt * 1.1);
+        // Soft steps — quieter figure-8, less lean
+        walkBobPhase += dt * (5.4 + walkBobAmt * 0.8);
         const s = Math.sin(walkBobPhase);
         const c = Math.cos(walkBobPhase);
-        const a = walkBobAmt;
+        const a = walkBobAmt * 0.55;
         walkBobOff.set(
-          s * 0.005 * a,
-          (s * c) * 0.0075 * a,
-          c * 0.0018 * a
+          s * 0.0028 * a,
+          (s * c) * 0.0042 * a,
+          c * 0.001 * a
         );
-        camera.rotation.z = s * 0.008 * a;
-        camera.rotation.x = (s * c) * 0.004 * a;
+        camera.rotation.z = s * 0.004 * a;
+        camera.rotation.x = (s * c) * 0.002 * a;
       } else {
         walkBobOff.set(0, 0, 0);
         camera.rotation.z = THREE.MathUtils.damp(camera.rotation.z, 0, 14, dt);
@@ -433,6 +487,7 @@ import * as THREE from 'three';
       pos.z = THREE.MathUtils.clamp(pos.z, CABIN_LIMITS.minZ + WALK_RADIUS, CABIN_LIMITS.maxZ - WALK_RADIUS);
 
       for (const b of CABIN_COLLIDERS) {
+        if (b.doorId && (doorOpenState[b.doorId] || 0) > 0.45) continue;
         const minX = b.minX - WALK_RADIUS;
         const maxX = b.maxX + WALK_RADIUS;
         const minZ = b.minZ - WALK_RADIUS;
@@ -450,6 +505,24 @@ import * as THREE from 'three';
         else pos.z = maxZ;
       }
       pos.y = 0.08;
+    }
+
+    function updateCabinDoors(dt) {
+      if (!autoDoors.length) return;
+      const px = head.position.x;
+      const pz = head.position.z;
+      const nearX = Math.abs(px) < 1.35;
+      for (const d of autoDoors) {
+        const nearZ = Math.abs(pz - d.z) < d.trigger;
+        const want = nearX && nearZ ? 1 : 0;
+        d.openAmt = THREE.MathUtils.damp(d.openAmt, want, want ? 5.5 : 4.2, dt);
+        if (d.openAmt < 0.002) d.openAmt = 0;
+        if (d.openAmt > 0.998) d.openAmt = 1;
+        const e = d.openAmt * d.openAmt * (3 - 2 * d.openAmt);
+        d.left.position.x = THREE.MathUtils.lerp(d.xClosedL, d.xOpenL, e);
+        d.right.position.x = THREE.MathUtils.lerp(d.xClosedR, d.xOpenR, e);
+        doorOpenState[d.id] = d.openAmt;
+      }
     }
     document.addEventListener('mousemove', (e) => {
       if (!controls.isLocked) return;
@@ -476,6 +549,29 @@ import * as THREE from 'three';
         emissive: new THREE.Color(hex).multiplyScalar(0.08),
         emissiveIntensity: 0.35,
       });
+    }
+
+    const CK_FONT_STACK = '"Consolas", "Lucida Console", "Courier New", monospace';
+    const CK_HUD_DPI = 1.15;
+    const CK_PANEL_DPI = 1.1;
+    const CK_HUD_PAINT_HZ = 60;
+
+    function ckFont(px, weight = 'bold') {
+      return `${weight} ${px}px ${CK_FONT_STACK}`;
+    }
+
+    function prepCkCanvasCtx(ctx, dpi = 1) {
+      if (!ctx) return;
+      if (dpi > 1) ctx.scale(dpi, dpi);
+      ctx.imageSmoothingEnabled = true;
+      if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'medium';
+    }
+
+    function ckScreenSize(scr) {
+      return {
+        w: scr.ckW || scr.canvas.width,
+        h: scr.ckH || scr.canvas.height,
+      };
     }
 
     function buildCockpit() {
@@ -555,29 +651,31 @@ import * as THREE from 'three';
 
       const addScreen = (role, spec) => {
         const { w, h, x, y, z, sx, sy, rx = -0.42, ry = 0, rz = 0, glass = false } = spec;
+        const dpi = glass ? CK_HUD_DPI : CK_PANEL_DPI;
         if (!glass) {
           addBox(sx + 0.04, sy + 0.04, 0.05, matFrame, x, y, z - 0.035, rx, ry, rz);
           addBox(sx + 0.04, 0.016, 0.07, matDark, x, y + sy * 0.5 + 0.012, z - 0.02, rx, ry, rz);
         }
         const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
+        canvas.width = Math.round(w * dpi);
+        canvas.height = Math.round(h * dpi);
         const ctx = canvas.getContext('2d', { alpha: !!glass });
+        prepCkCanvasCtx(ctx, dpi);
         if (!glass && ctx) {
           ctx.fillStyle = '#020814';
           ctx.fillRect(0, 0, w, h);
           ctx.strokeStyle = 'rgba(62,199,255,0.75)';
           ctx.strokeRect(4, 4, w - 8, h - 8);
           ctx.fillStyle = 'rgba(62,199,255,0.95)';
-          ctx.font = 'bold 22px monospace';
+          ctx.font = ckFont(22);
           ctx.fillText('КАРТА СИСТЕМЫ', 18, 36);
           ctx.fillStyle = 'rgba(62,199,255,0.5)';
-          ctx.font = '14px monospace';
+          ctx.font = ckFont(14, '600');
           ctx.fillText('INIT…', 18, 58);
         }
         const tex = new THREE.CanvasTexture(canvas);
         tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 2;
+        tex.anisotropy = 1;
         tex.generateMipmaps = false;
         tex.minFilter = THREE.LinearFilter;
         tex.magFilter = THREE.LinearFilter;
@@ -602,13 +700,16 @@ import * as THREE from 'three';
         if (glass) {
           root.userData.hudGlass = panel;
           root.userData.hudGlassSize = { sx, sy };
+          panel.matrixAutoUpdate = false;
+          panel.updateMatrix();
+          panel.visible = false;
         } else {
           panel.matrixAutoUpdate = false;
           panel.updateMatrix();
           root.userData.mapScreen = panel;
         }
         root.add(panel);
-        ckScreens.push({ canvas, ctx, tex, role, panel });
+        ckScreens.push({ canvas, ctx, tex, role, panel, ckW: w, ckH: h, dpi });
       };
 
       root.userData.powerEmissiveMats = [];
@@ -658,7 +759,7 @@ import * as THREE from 'three';
       addBox(4.8, 0.22, 4.4, matHull, 0, 1.38, 0.15);
       addBox(0.45, 2.8, 4.4, matHull, -2.25, 0.08, 0.15);
       addBox(0.45, 2.8, 4.4, matHull, 2.25, 0.08, 0.15);
-      // Cockpit → habitation door — wide open aisle
+      // Cockpit → habitation door frame (sliding leaves fill the opening)
       addBox(1.15, 2.8, 0.28, matDark, -1.8, 0.08, 2.15);
       addBox(1.15, 2.8, 0.28, matDark, 1.8, 0.08, 2.15);
       addBox(4.8, 0.55, 0.28, matDark, 0, 1.25, 2.15); // lintel
@@ -668,6 +769,50 @@ import * as THREE from 'three';
       addBox(2.2, 0.04, 0.06, matHabLamp, 0, 0.88, 2.0);
       addLed(-1.05, 0.7, 1.98, 0x33ff88, 0.04);
       addLed(1.05, 0.7, 1.98, 0x33ff88, 0.04);
+
+      const matDoorLeaf = makeHullMat(0x0c121a, 0.9, 0.42);
+      const matDoorStripe = new THREE.MeshStandardMaterial({
+        color: 0x201808, emissive: 0xff6622, emissiveIntensity: 0.22, roughness: 0.5, metalness: 0.25,
+      });
+      const registerAutoDoor = (id, z, opts = {}) => {
+        const leafW = opts.leafW ?? 1.08;
+        const leafH = opts.leafH ?? 2.05;
+        const leafD = opts.leafD ?? 0.1;
+        const y = opts.y ?? -0.08;
+        const openX = opts.openX ?? 1.78;
+        const mkLeaf = (side) => {
+          const g = new THREE.Group();
+          const xClosed = side * (leafW * 0.5 + 0.012);
+          g.position.set(xClosed, y, z);
+          const panel = new THREE.Mesh(boxGeo(leafW, leafH, leafD), matDoorLeaf);
+          g.add(panel);
+          const stripe = new THREE.Mesh(boxGeo(leafW * 0.82, 0.04, 0.02), matDoorStripe);
+          stripe.position.set(0, 0.52, leafD * 0.55);
+          g.add(stripe);
+          const slit = new THREE.Mesh(boxGeo(0.22, 0.42, 0.018), matGlow);
+          slit.position.set(-side * 0.22, 0.12, leafD * 0.55);
+          g.add(slit);
+          root.add(g);
+          return { group: g, xClosed, xOpen: side * openX };
+        };
+        const L = mkLeaf(-1);
+        const R = mkLeaf(1);
+        autoDoors.push({
+          id,
+          z,
+          openAmt: 0,
+          trigger: opts.trigger ?? 1.9,
+          left: L.group,
+          right: R.group,
+          xClosedL: L.xClosed,
+          xOpenL: L.xOpen,
+          xClosedR: R.xClosed,
+          xOpenR: R.xOpen,
+        });
+        doorOpenState[id] = 0;
+      };
+      registerAutoDoor('cockpit', 2.12, { trigger: 2.05 });
+      root.userData.registerAutoDoor = registerAutoDoor;
 
       for (let i = -3; i <= 3; i++) addBox(4.2, 0.015, 0.03, matMetal, 0, -1.095, i * 0.45);
       // Center walk stripe — slightly ABOVE floor top (floor y=-1.22 h=0.22 → top≈-1.11)
@@ -890,7 +1035,7 @@ import * as THREE from 'three';
         w: 320, h: 360, x: -0.55, y: -0.4, z: -1.3, sx: 0.42, sy: 0.48, rx: tilt,
       });
       // Accent light so panels read as active displays
-      const mapLight = new THREE.PointLight(0x4ec8ff, 0.55, 2.2, 2);
+      const mapLight = new THREE.PointLight(0x4ec8ff, 0.02, 2.2, 2);
       mapLight.position.set(0, -0.25, -1.15);
       root.add(mapLight);
 
@@ -955,7 +1100,7 @@ import * as THREE from 'three';
       };
 
       root.userData.cabinLightsOn = false;
-      root.userData.shipPowerOn = true;
+      root.userData.shipPowerOn = false;
       // Soft cockpit emissives that die with power
       for (const m of [matGlow, matWarn, matOk]) {
         m.userData.baseEmissive = m.emissiveIntensity;
@@ -1039,19 +1184,19 @@ import * as THREE from 'three';
       root.userData.habitationBuilt = false;
 
       // Cockpit-only lights (habitation PointLights spawn with aft)
-      const cabinKey = new THREE.PointLight(0x6aa8ff, 1.85, 8, 1.5);
+      const cabinKey = new THREE.PointLight(0x6aa8ff, 0.05, 8, 1.5);
       cabinKey.position.set(0, 0.7, 0.15);
       cabinKey.userData.baseIntensity = 1.85;
       root.add(cabinKey);
       root.userData.keyLight = cabinKey;
 
-      const dashFill = new THREE.PointLight(0x3ec7ff, 1.1, 5, 2.2);
+      const dashFill = new THREE.PointLight(0x3ec7ff, 0.02, 5, 2.2);
       dashFill.position.set(0, -0.15, -1.0);
       dashFill.userData.baseIntensity = 1.1;
       root.add(dashFill);
       root.userData.dashFill = dashFill;
 
-      const rimFill = new THREE.PointLight(0x88aacc, 0.55, 6, 2.0);
+      const rimFill = new THREE.PointLight(0x88aacc, 0.02, 6, 2.0);
       rimFill.position.set(0, 0.35, 0.5);
       rimFill.userData.baseIntensity = 0.55;
       root.add(rimFill);
@@ -1059,7 +1204,7 @@ import * as THREE from 'three';
       mapLight.userData.baseIntensity = 0.55;
       root.userData.mapLight = mapLight;
 
-      const cabinAmbient = new THREE.AmbientLight(0x6a90b8, 0.02);
+      const cabinAmbient = new THREE.AmbientLight(0x6a90b8, 0.0);
       cabinAmbient.userData.baseIntensity = 0.45;
       root.add(cabinAmbient);
       root.userData.cabinAmbient = cabinAmbient;
@@ -1243,14 +1388,38 @@ import * as THREE from 'three';
       addBox(0.72, 0.7, 0.08, matFrame, -1.6, -0.45, 3.98);
       addBox(0.18, 0.06, 0.1, matSleepLamp, -1.45, 0.05, 4.05);
       addCyl(0.04, 0.05, 0.08, matMetal, -1.45, 0.0, 4.05, Math.PI / 2, 0, 0, 8);
-      if (walkLights.length < 6) {
-        const sleepPl = new THREE.PointLight(0xffb070, 0.06, 3.2, 1.8);
-        sleepPl.position.set(-1.45, 0.15, 4.9);
-        sleepPl.userData.baseIntensity = 1.15;
-        root.add(sleepPl);
-        walkLights.push(sleepPl);
-      }
       addBox(0.55, 0.05, 1.4, matSleepLamp, -1.55, 1.08, 5.6); // warm cabin ceiling strip
+
+      // Mini night lanterns — stay lit in cutscene / power-off so the berth is readable
+      const nightLights = [];
+      const matNightLens = new THREE.MeshStandardMaterial({
+        color: 0x1a1008,
+        emissive: 0xffaa66,
+        emissiveIntensity: 0.85,
+        roughness: 0.35,
+        metalness: 0.15,
+      });
+      matNightLens.userData.offEmissive = 0.25;
+      matNightLens.userData.onEmissive = 1.15;
+      root.userData.nightLensMat = matNightLens;
+      const addNightLantern = (x, y, z, intensity = 0.55, color = 0xffb070) => {
+        addBox(0.07, 0.05, 0.05, matMetal, x, y, z);
+        addBox(0.045, 0.035, 0.04, matNightLens, x + 0.02, y, z);
+        addCyl(0.012, 0.012, 0.05, matMetal, x - 0.02, y + 0.04, z, 0, 0, 0, 6);
+        const pl = new THREE.PointLight(color, intensity * 0.55, 3.4, 1.55);
+        pl.position.set(x + 0.05, y - 0.05, z);
+        pl.userData.baseIntensity = intensity;
+        pl.userData.nightLight = true;
+        root.add(pl);
+        nightLights.push(pl);
+        return pl;
+      };
+      // Reading / bunk / aisle / locker micro-lights
+      addNightLantern(-1.42, 0.12, 4.12, 0.72, 0xffc080); // headboard reader
+      addNightLantern(-1.78, 0.95, 5.15, 0.48, 0xffb070); // ceiling niche
+      addNightLantern(-1.12, 0.35, 5.05, 0.4, 0xffd0a0);  // doorway sill
+      addNightLantern(-1.55, -0.35, 6.75, 0.35, 0xffaa66); // foot locker
+      root.userData.nightLights = nightLights;
 
       // Foot locker + personal shelf
       addBox(0.7, 0.55, 0.75, matBunk, -1.65, -0.95, 6.95);
@@ -1292,49 +1461,20 @@ import * as THREE from 'three';
       }
       addDecoMonitor(-1.72, 0.35, 6.2, 0.32, 0.22, Math.PI / 2, 'SLEEP', ['HR 52', 'REST'], '#88ffaa');
 
-      // Convex portholes — cheap glass (Physical+transmission caused look-around freezes)
-      const starTexForPort = (() => {
-        const c = document.createElement('canvas');
-        c.width = 64;
-        c.height = 64;
-        const cx = c.getContext('2d');
-        if (cx) {
-          cx.fillStyle = '#01040c';
-          cx.fillRect(0, 0, 64, 64);
-          cx.fillStyle = '#ffffff';
-          for (let s = 0; s < 28; s++) {
-            cx.globalAlpha = 0.35 + Math.random() * 0.65;
-            cx.fillRect(4 + Math.random() * 56, 4 + Math.random() * 56, 1, 1);
-          }
-          cx.globalAlpha = 1;
-        }
-        const t = new THREE.CanvasTexture(c);
-        t.colorSpace = THREE.SRGBColorSpace;
-        t.generateMipmaps = false;
-        return t;
-      })();
+      // Convex portholes — thin rim + barely-there lens (real space behind)
       const lensGlassMat = new THREE.MeshStandardMaterial({
-        color: 0x9ec4e8,
-        metalness: 0.05,
-        roughness: 0.18,
+        color: 0xffffff,
+        metalness: 0,
+        roughness: 0.02,
         transparent: true,
-        opacity: 0.32,
+        opacity: 0.04,
         depthWrite: false,
         side: THREE.FrontSide,
       });
-      const portStarMat = new THREE.MeshBasicMaterial({ map: starTexForPort, toneMapped: false });
-      const portCircleGeo = new THREE.CircleGeometry(0.17, 20);
       const portTorusGeo = new THREE.TorusGeometry(0.2, 0.026, 8, 20);
       const portLensGeo = new THREE.SphereGeometry(0.19, 16, 12);
       const addConvexPorthole = (x, y, z, faceRight) => {
-        // faceRight=false → left wall (normal +X into cabin)
         const into = faceRight ? -1 : 1;
-        const stars = new THREE.Mesh(portCircleGeo, portStarMat);
-        stars.position.set(x - into * 0.05, y, z);
-        stars.rotation.y = into > 0 ? Math.PI / 2 : -Math.PI / 2;
-        stars.matrixAutoUpdate = false;
-        stars.updateMatrix();
-        root.add(stars);
 
         const rim = new THREE.Mesh(portTorusGeo, matFrame);
         rim.position.set(x - into * 0.01, y, z);
@@ -1357,15 +1497,7 @@ import * as THREE from 'three';
         addConvexPorthole(-1.97, 0.55, 4.4 + i * 0.7, false);
       }
 
-      // Observation windows — hollow frame + crystal-clear pane; REAL scene space through cutout (no HUD)
-      const obsGlassMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.02,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        toneMapped: false,
-      });
+      // Observation windows — hollow frame only; open void to real space (no gray glass pane)
       const addHullWindow = (x, y, z, sizeY = 0.72, sizeZ = 0.72, faceRight = false) => {
         const into = faceRight ? -1 : 1;
         const halfY = sizeY * 0.5;
@@ -1396,18 +1528,6 @@ import * as THREE from 'three';
         }
         addLed(x + into * 0.08, y + halfY + 0.055, z - halfZ * 0.35, 0x3ec7ff, 0.03);
         addLed(x + into * 0.08, y + halfY + 0.055, z + halfZ * 0.35, 0x33ff88, 0.03);
-
-        // Nearly invisible glass — open view of real space (no crossbars)
-        const glass = new THREE.Mesh(
-          new THREE.PlaneGeometry(sizeZ * 0.98, sizeY * 0.98),
-          obsGlassMat
-        );
-        glass.position.set(x + into * 0.09, y, z);
-        glass.rotation.y = faceRight ? -Math.PI / 2 : Math.PI / 2;
-        glass.renderOrder = 2;
-        glass.matrixAutoUpdate = false;
-        glass.updateMatrix();
-        root.add(glass);
       };
       addHullWindow(-1.97, 0.28, 3.35, 0.78, 0.78, false);
       addHullWindow(1.98, 0.2, 5.45, 1.6, 2.25, true);
@@ -1431,7 +1551,7 @@ import * as THREE from 'three';
       addDecoMonitor(1.78, -0.15, 3.75, 0.26, 0.16, -Math.PI / 2, 'RX', ['OK'], '#ff8866');
       addDecoMonitor(1.78, -0.15, 7.2, 0.26, 0.16, -Math.PI / 2, 'HY', ['A82'], '#66ccff');
 
-      // ——— Door 05 (wide) ———
+      // ——— Door 05 (wide) — frame + auto sliding leaves ———
       addBox(1.3, 2.6, 0.22, matDark, -1.6, 0.05, 8.2);
       addBox(1.3, 2.6, 0.22, matDark, 1.6, 0.05, 8.2);
       addBox(4.2, 0.45, 0.22, matDark, 0, 1.2, 8.2);
@@ -1439,6 +1559,9 @@ import * as THREE from 'three';
       addBox(0.1, 2.0, 0.12, matFrame, 1.05, -0.1, 8.1);
       addBox(2.0, 0.12, 0.12, matFrame, 0, 0.95, 8.1);
       addBox(1.9, 0.05, 0.04, matHazard, 0, 0.82, 8.05);
+      if (typeof root.userData.registerAutoDoor === 'function') {
+        root.userData.registerAutoDoor('cargo', 8.15, { leafW: 1.08, leafH: 2.0, trigger: 2.0 });
+      }
       {
         const labelC = document.createElement('canvas');
         labelC.width = 128; labelC.height = 128;
@@ -1671,21 +1794,22 @@ import * as THREE from 'three';
 
     function syncOrbitGuides() {
       if (!orbitGroup) return;
-      // Trajectory rings = HUD guides only — hide when HUD off (clear view through cabin windows)
       const hudOn = !document.body.classList.contains('hud-hidden');
       const awake = !document.body.classList.contains('waking');
-      orbitGroup.visible = hudOn && awake && isShipPowered();
+      if (!hudOn || !awake || !isShipPowered()) {
+        orbitGroup.visible = false;
+        return;
+      }
+      // Orbit rings: captain's rubka only (by position) — not hab side windows
+      orbitGroup.visible = isInCaptainCockpit();
     }
 
     function syncCockpitVisibility() {
       if (!cockpitRoot) return;
       const show = isPlaying() && !landed;
       cockpitRoot.visible = show;
-      const glass = cockpitRoot.userData.hudGlass;
+      updateHudGlassVisibility();
       const powered = isShipPowered();
-      if (glass) {
-        glass.visible = show && powered && !document.body.classList.contains('hud-hidden');
-      }
       for (const scr of ckScreens) {
         if (!scr.panel || scr.role === 'hudGlass') continue;
         scr.panel.visible = show && powered;
@@ -1820,6 +1944,7 @@ import * as THREE from 'three';
       };
       document.body.classList.add('cabin-walk');
       if (modeEl) modeEl.textContent = 'Встаём…';
+      syncMobileSeatBtn();
     }
 
     function finishSeatAnim() {
@@ -1830,8 +1955,9 @@ import * as THREE from 'three';
       if (mode === 'stand') {
         isWalkingInCabin = true;
         head.position.copy(STAND_HEAD);
-        // keep light bob phase continuity when standing finishes
-        if (modeEl) modeEl.textContent = 'Ходьба · LIGHT — свет · Alt+ЛКМ — кнопки · F у кресла — сесть';
+        if (modeEl) modeEl.textContent = document.body.classList.contains('mobile-play')
+          ? 'Ходьба · 👁 — кнопки · СЕСТЬ у кресла'
+          : 'Ходьба · LIGHT — свет · Alt+ЛКМ — кнопки · F у кресла — сесть';
       } else {
         isWalkingInCabin = false;
         head.position.copy(SEAT_HEAD);
@@ -1840,13 +1966,27 @@ import * as THREE from 'three';
         head.rotation.set(0, 0, 0);
         resetWalkBob();
         document.body.classList.remove('cabin-walk');
-        if (modeEl) modeEl.textContent = 'В кресле пилота · F — встать';
+        if (modeEl) modeEl.textContent = document.body.classList.contains('mobile-play')
+          ? 'В кресле · ВСТАТЬ — ходьба'
+          : 'В кресле пилота · F — встать';
         setTimeout(() => {
-          if (!isWalkingInCabin && !seatAnim && modeEl && modeEl.textContent.includes('кресле')) {
+          if (!isWalkingInCabin && !seatAnim && modeEl && (
+            modeEl.textContent.includes('кресле') || modeEl.textContent.includes('ВСТАТЬ')
+          )) {
             modeEl.textContent = '';
           }
-        }, 1400);
+        }, 1800);
       }
+      syncMobileSeatBtn();
+    }
+
+    function syncMobileSeatBtn() {
+      const btn = document.getElementById('btn-seat');
+      if (!btn) return;
+      const walking = isWalkingInCabin || seatAnim?.mode === 'stand';
+      btn.textContent = walking ? 'СЕСТЬ' : 'ВСТАТЬ';
+      btn.classList.toggle('walking', !!walking);
+      btn.setAttribute('aria-label', walking ? 'Сесть в кресло' : 'Встать из кресла');
     }
 
     /** @returns {boolean} true while a sit/stand tween is running */
@@ -1898,14 +2038,32 @@ import * as THREE from 'three';
       const flight = 1 - walk;
       const powered = isShipPowered();
       const cinematic = typeof isIntroCinematic === 'function' && isIntroCinematic();
-      const powerMul = powered ? 1 : (cinematic ? 0.35 : 0);
-      const lightsOn = (!!cockpitRoot.userData.cabinLightsOn && powered) || (cinematic && !!cockpitRoot.userData.cabinLightsOn);
-      // Habitation glow only with LIGHT button (and while out of the seat)
-      const lit = walk * (lightsOn ? 1 : 0) + (cinematic ? 0.55 : 0);
+      const powerMul = powered ? 1 : (cinematic ? 0.12 : 0);
+      const lightsOn = !!cockpitRoot.userData.cabinLightsOn && powered;
+      // Habitation glow only with LIGHT button — ship starts dark
+      const lit = walk * (lightsOn ? 1 : 0) + (cinematic ? 0.12 : 0);
       const lights = cockpitRoot.userData.walkLights || [];
       for (const L of lights) {
-        const target = (L.userData.baseIntensity || 1) * (0.02 + 0.98 * Math.min(1, lit)) * Math.max(powerMul, cinematic ? 0.4 : 0);
+        const target = (L.userData.baseIntensity || 1) * (0.01 + 0.99 * Math.min(1, lit)) * Math.max(powerMul, cinematic ? 0.08 : 0);
         L.intensity = THREE.MathUtils.damp(L.intensity, target, 5.5, dt);
+      }
+      // Berth mini-lanterns: always soft; brighter in wake cutscene
+      const nightLs = cockpitRoot.userData.nightLights || [];
+      for (const L of nightLs) {
+        const base = L.userData.baseIntensity || 0.5;
+        let nightTarget;
+        if (cinematic) nightTarget = base * 0.95;
+        else if (lightsOn && powered) nightTarget = base * 0.28;
+        else if (powered) nightTarget = base * 0.42;
+        else nightTarget = base * 0.55; // emergency standby
+        L.intensity = THREE.MathUtils.damp(L.intensity, nightTarget, 4.5, dt);
+      }
+      const nightLens = cockpitRoot.userData.nightLensMat;
+      if (nightLens) {
+        const onE = nightLens.userData.onEmissive ?? 1.15;
+        const offE = nightLens.userData.offEmissive ?? 0.25;
+        const lensTarget = cinematic ? onE : (lightsOn && powered ? offE * 1.2 : onE * 0.7);
+        nightLens.emissiveIntensity = THREE.MathUtils.damp(nightLens.emissiveIntensity, lensTarget, 5, dt);
       }
       const keyL = cockpitRoot.userData.keyLight;
       if (keyL) {
@@ -1914,10 +2072,10 @@ import * as THREE from 'three';
         const travelGlow = hyper.phase === 'travel' ? warpIntensity * 3.2 : 0;
         const flightPulse = 1.85
           + (flight > 0.2 ? travelGlow + (isThrusting ? 0.2 : 0) + chargeGlow : chargeGlow);
-        const walkKey = lightsOn ? 0.7 : 0.28;
+        const walkKey = lightsOn ? 0.7 : 0.06;
         const target = powered
           ? (flightPulse * flight + walkKey * walk)
-          : (cinematic ? 0.55 + walk * 0.35 : 0.02);
+          : (cinematic ? 0.08 + walk * 0.05 : 0.01);
         keyL.intensity = THREE.MathUtils.damp(keyL.intensity, target, 6, dt);
         if ((hyper.phase === 'prep' && hyperCharge > 0.08) || (warpIntensity > 0.12 && flight > 0.5 && powered)) {
           const t = hyper.phase === 'prep' ? hyperCharge : 1;
@@ -1937,7 +2095,7 @@ import * as THREE from 'three';
           dash.intensity,
           powered
             ? (dash.userData.baseIntensity || 1.1) * (0.25 + 0.75 * flight) + prepDash
-            : (cinematic ? 0.18 : 0),
+            : (cinematic ? 0.04 : 0),
           5, dt
         );
       }
@@ -1948,7 +2106,7 @@ import * as THREE from 'three';
           rim.intensity,
           powered
             ? (rim.userData.baseIntensity || 0.55) * (0.2 + 0.8 * flight) + 0.25 * lit + prepRim
-            : (cinematic ? 0.22 : 0),
+            : (cinematic ? 0.05 : 0),
           5, dt
         );
       }
@@ -1956,7 +2114,7 @@ import * as THREE from 'three';
       if (mapL) {
         mapL.intensity = THREE.MathUtils.damp(
           mapL.intensity,
-          powered ? (mapL.userData.baseIntensity || 0.55) * (0.3 + 0.7 * flight) : (cinematic ? 0.08 : 0),
+          powered ? (mapL.userData.baseIntensity || 0.55) * (0.3 + 0.7 * flight) : (cinematic ? 0.02 : 0),
           5, dt
         );
       }
@@ -1967,7 +2125,7 @@ import * as THREE from 'three';
           amb.intensity,
           powered
             ? (amb.userData.baseIntensity || 0.45) * lit + 0.02 * flight + prepAmb
-            : (cinematic ? 0.2 : 0),
+            : (cinematic ? 0.09 : 0),
           5, dt
         );
       }
@@ -1977,7 +2135,7 @@ import * as THREE from 'three';
         const offE = habLamp.userData.offEmissive ?? 0.015;
         habLamp.emissiveIntensity = THREE.MathUtils.damp(
           habLamp.emissiveIntensity,
-          (powered && lightsOn) || cinematic ? (cinematic && !powered ? onE * 0.45 : onE) : offE * (powered ? 1 : 0.3),
+          powered && lightsOn ? onE : offE * (powered ? 0.6 : 0.15),
           5.5, dt
         );
       }
@@ -1985,7 +2143,10 @@ import * as THREE from 'three';
       if (sleepLamp) {
         const onE = sleepLamp.userData.onEmissive ?? 0.55;
         const offE = sleepLamp.userData.offEmissive ?? 0.02;
-        const sleepGlow = cinematic && !powered ? onE * 0.85 : ((powered && lightsOn) ? onE : offE * (powered ? 1 : 0.25));
+        // Bunk strip + reader glow strong in wake cutscene
+        const sleepGlow = cinematic
+          ? onE * 0.95
+          : ((powered && lightsOn) ? onE : offE * (powered ? 0.8 : 0.35));
         sleepLamp.emissiveIntensity = THREE.MathUtils.damp(
           sleepLamp.emissiveIntensity,
           sleepGlow,
@@ -2032,8 +2193,11 @@ import * as THREE from 'three';
       if (distToSeat < 0.85) {
         sitInPilotSeat();
       } else if (modeEl) {
-        modeEl.textContent = 'Подойдите ближе к креслу пилота (F)';
+        modeEl.textContent = document.body.classList.contains('mobile-play')
+          ? 'Подойдите ближе к креслу · СЕСТЬ'
+          : 'Подойдите ближе к креслу пилота (F)';
       }
+      syncMobileSeatBtn();
     }
 
     function isPlaying() {
@@ -2088,10 +2252,32 @@ import * as THREE from 'three';
       || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     const isAndroid = /Android/i.test(navigator.userAgent);
     const isMobileUA = isTouch;
-    // Light bloom only — do not crush resolution/quality on phones
+
+    // Phone: sharper render + softer glow (prettier without going full-desktop cost)
     if (isMobileUA) {
-      bloomPass.strength = 0.18;
-      bloomPass.threshold = 0.985;
+      const pr = Math.min(window.devicePixelRatio || 1, 1.75);
+      renderer.setPixelRatio(pr);
+      composer.setPixelRatio(pr);
+      renderer.toneMappingExposure = 1.14;
+      bloomPass.strength = 0.32;
+      bloomPass.threshold = 0.94;
+      bloomPass.radius = 0.48;
+      // Slimmer HUD glass so it doesn't fill the whole windshield
+      const glass = cockpitRoot?.userData.hudGlass;
+      if (glass) {
+        glass.scale.set(0.62, 0.58, 1);
+        glass.updateMatrix();
+        const sz = cockpitRoot.userData.hudGlassSize;
+        if (sz) {
+          cockpitRoot.userData.hudGlassSize = { sx: sz.sx * 0.62, sy: sz.sy * 0.58 };
+        }
+      }
+      // Compact dash screens a bit
+      for (const scr of ckScreens) {
+        if (scr.role === 'hudGlass' || !scr.panel) continue;
+        scr.panel.scale.set(0.88, 0.88, 1);
+        scr.panel.updateMatrix();
+      }
     }
 
     const mobilePad = document.getElementById('mobile-pad');
@@ -2101,6 +2287,8 @@ import * as THREE from 'three';
     const introSkipEl = document.getElementById('intro-skip');
     const introSkipFill = document.getElementById('intro-skip-fill');
     const mobileMove = { x: 0, z: 0 };
+    const mobileLookVel = { x: 0, y: 0 };
+    let mobileLookDragging = false;
 
     /** Cinematic intro: bunk wake → walk to seat → power-on → control */
     let wake = null;
@@ -2123,7 +2311,7 @@ import * as THREE from 'three';
     const INTRO_SKIP_HOLD = 3.0;
 
     if (isTouch && hintText) {
-      hintText.textContent = 'Горизонтально · на весь экран. Джойстик — тяга · свайп — поворот · ⚡ — ускорение · 👁×2 — осмотр/кнопки.';
+      hintText.textContent = 'Джойстик — тяга/тормоз/крен · свайп — поворот · ВСТАТЬ — ходьба · ⚡ — ×3 · ✕ — тормоз · 👁 — осмотр.';
     }
     if (isTouch && wakeVeil) {
       const wh = wakeVeil.querySelector('.wake-hint');
@@ -2218,8 +2406,8 @@ import * as THREE from 'three';
       if (!cockpitRoot) return;
       cockpitRoot.userData.shipPowerOn = !!on;
       document.body.classList.toggle('ship-power-off', !on);
-      if (on && opts.lights !== false) cockpitRoot.userData.cabinLightsOn = true;
-      if (!on) cockpitRoot.userData.cabinLightsOn = !!opts.keepCabinLights;
+      if (on && opts.lights === true) cockpitRoot.userData.cabinLightsOn = true;
+      if (!on && !opts.keepCabinLights) cockpitRoot.userData.cabinLightsOn = false;
       for (const scr of ckScreens) {
         if (!on) {
           scr._poweredOff = true;
@@ -2246,7 +2434,8 @@ import * as THREE from 'three';
         if (typeof revealHabitation === 'function') revealHabitation();
       } catch (_) { /* ignore */ }
 
-      setShipPower(false, { keepCabinLights: true });
+      setShipPower(false, { keepCabinLights: false });
+      if (cockpitRoot) cockpitRoot.userData.cabinLightsOn = false;
       isWalkingInCabin = true;
       seatAnim = null;
       velocity.set(0, 0, 0);
@@ -2324,7 +2513,8 @@ import * as THREE from 'three';
       wake.canControl = true;
       wake.phase = 'done';
 
-      setShipPower(true, { lights: true, boot: false });
+      setShipPower(true, { lights: false, boot: false });
+      if (cockpitRoot) cockpitRoot.userData.cabinLightsOn = false;
       try {
         if (typeof revealHabitation === 'function') revealHabitation();
       } catch (_) { /* ignore */ }
@@ -2552,7 +2742,8 @@ import * as THREE from 'three';
         }
         if (wake.age >= 1.15 && !wake.powered) {
           wake.powered = true;
-          setShipPower(true, { lights: true, boot: true });
+          setShipPower(true, { lights: false, boot: true });
+          if (cockpitRoot) cockpitRoot.userData.cabinLightsOn = false;
           setIntroCaption('Загрузка систем…');
         }
         if (wake.age >= 1.8) advanceIntroPhase('boot', '');
@@ -3553,18 +3744,23 @@ import * as THREE from 'three';
     }
 
     // ---- Flight + atmosphere encounter + landing ----
-    // W cruise ~1800; Shift boost ~2800 (huge system / worlds)
-    let baseSpeed = 1800;
-    const SPEED_CRUISE = 1800;
-    const SPEED_BOOST = 5200;
-    const SPEED_NORMAL = SPEED_CRUISE; // takeoff / legacy aliases
+    // Space: no drag. W +50/s from 100 → max 50000; S/X brake −1000/s
+    let baseSpeed = 100;
+    const SPEED_START = 100;
+    const SPEED_ACCEL = 50;
+    const SPEED_BOOST_MULT = 3;
+    const SPEED_MAX = 50000;
+    const SPEED_BRAKE = 1000;
+    const SPEED_CRUISE = 1800; // world/orbit layout reference (not a flight cap)
+    const SPEED_BOOST = SPEED_MAX;
+    const SPEED_NORMAL = SPEED_CRUISE;
     const timeScale = 0.25; // fixed orbit pace
     let nearestPlanet = null;
     let landed = null;
     let verticalVel = 0;
     let focusedBody = null; // planet currently enlarged / approach zone
     let takeoffCooldown = 0;
-    let hudSpeed = 200;
+    let hudSpeed = 100;
     const takeoffNormal = new THREE.Vector3(0, 1, 0);
     const lastFocusedWorld = new THREE.Vector3();
     let hasLastFocusedWorld = false;
@@ -4202,7 +4398,7 @@ import * as THREE from 'three';
       const c = navTablet.canvas;
       // Fit canvas to CSS size for sharpness
       const rect = c.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = Math.min(1.25, window.devicePixelRatio || 1);
       const tw = Math.max(320, Math.floor(rect.width * dpr));
       const th = Math.max(240, Math.floor(rect.height * dpr));
       if (c.width !== tw || c.height !== th) {
@@ -4227,9 +4423,9 @@ import * as THREE from 'three';
     const camDir = new THREE.Vector3();
     const fogColor = new THREE.Color();
 
-    /** Cruise units/sec ≈ baseSpeed * 16/6 from flight damping equilibrium */
+    /** Cruise units/sec — reference for planet orbit/landing world scales */
     function cruiseSpeed() {
-      return baseSpeed * (16 / 6);
+      return SPEED_CRUISE;
     }
 
     /** Scale so orbit / landing are continent-sized worlds */
@@ -4830,7 +5026,7 @@ import * as THREE from 'three';
       // Soft hop into free flight — stay near the surface so you can return
       takeoffNormal.copy(obj.position).sub(tmpWorld).normalize();
       obj.position.copy(tmpWorld).addScaledVector(takeoffNormal, target.radius + EYE + 12);
-      velocity.copy(takeoffNormal).multiplyScalar(SPEED_NORMAL * 0.4);
+      velocity.copy(takeoffNormal).multiplyScalar(SPEED_START);
 
       landed = null;
       takeoffCooldown = 0.4; // brief — only to avoid instantly snapping back to land
@@ -5023,40 +5219,70 @@ import * as THREE from 'three';
 
     // ---- Mobile controls (after game state exists) ----
     {
-      const lookState = { id: null, x: 0, y: 0 };
+      const lookState = { id: null, x: 0, y: 0, lastT: 0 };
       const joyKnob = document.getElementById('joy-knob');
       const joyZone = document.getElementById('joy-zone');
       const lookZone = document.getElementById('look-zone');
-      const JOY_MAX = 52;
+      const JOY_MAX = 44;
+      const JOY_DEAD = 0.1;
       let joyId = null;
+      let joyOriginX = 0;
+      let joyOriginY = 0;
+
+      function curveAxis(v) {
+        const s = Math.sign(v);
+        const a = Math.abs(v);
+        if (a < JOY_DEAD) return 0;
+        const t = (a - JOY_DEAD) / (1 - JOY_DEAD);
+        return s * (t * t * (3 - 2 * t));
+      }
 
       function joyUpdate(clientX, clientY) {
-        const rect = joyZone.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        let dx = clientX - cx;
-        let dy = clientY - cy;
+        let dx = clientX - joyOriginX;
+        let dy = clientY - joyOriginY;
         const len = Math.hypot(dx, dy) || 1;
         const capped = Math.min(len, JOY_MAX);
         dx = (dx / len) * capped;
         dy = (dy / len) * capped;
-        joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-        mobileMove.x = dx / JOY_MAX;
-        mobileMove.z = dy / JOY_MAX;
+        if (joyKnob) joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+        mobileMove.x = curveAxis(dx / JOY_MAX);
+        mobileMove.z = curveAxis(dy / JOY_MAX);
+      // When walking: joy = move, not thrust/brake paint
+      if (typeof isWalkingInCabin !== 'undefined' && isWalkingInCabin) {
+        joyZone?.classList.toggle('thrust', Math.hypot(mobileMove.x, mobileMove.z) > 0.2);
+        joyZone?.classList.remove('brake');
+      } else {
+        joyZone?.classList.toggle('thrust', mobileMove.z < -0.15);
+        joyZone?.classList.toggle('brake', mobileMove.z > 0.15);
       }
+      }
+
       function joyEnd() {
         joyId = null;
         mobileMove.x = 0;
         mobileMove.z = 0;
-        joyKnob.style.transform = 'translate(0, 0)';
+        if (joyKnob) joyKnob.style.transform = 'translate(0, 0)';
+        const base = joyZone?.querySelector('.joy-base');
+        if (base) base.style.transform = '';
+        joyZone?.classList.remove('thrust', 'brake', 'active');
       }
 
       joyZone.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         e.stopPropagation();
         joyId = e.pointerId;
-        joyZone.setPointerCapture(e.pointerId);
+        const rect = joyZone.getBoundingClientRect();
+        const pad = 28;
+        joyOriginX = THREE.MathUtils.clamp(e.clientX, rect.left + pad, rect.right - pad);
+        joyOriginY = THREE.MathUtils.clamp(e.clientY, rect.top + pad, rect.bottom - pad);
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const base = joyZone.querySelector('.joy-base');
+        if (base) base.style.transform = `translate(${joyOriginX - cx}px, ${joyOriginY - cy}px)`;
+        joyZone.classList.add('active');
+        try { joyZone.setPointerCapture(e.pointerId); } catch (_) {}
         joyUpdate(e.clientX, e.clientY);
+        if (navigator.vibrate) try { navigator.vibrate(8); } catch (_) {}
       });
       joyZone.addEventListener('pointermove', (e) => {
         if (e.pointerId !== joyId) return;
@@ -5066,26 +5292,41 @@ import * as THREE from 'three';
       joyZone.addEventListener('pointerup', joyEnd);
       joyZone.addEventListener('pointercancel', joyEnd);
 
+      const LOOK_SENS = 3.6;
       lookZone.addEventListener('pointerdown', (e) => {
         if (!mobilePlaying) return;
+        if (e.target.closest?.('.joy-zone, .mob-btns, .mob-btn')) return;
         lookState.id = e.pointerId;
         lookState.x = e.clientX;
         lookState.y = e.clientY;
+        lookState.lastT = performance.now();
+        mobileLookDragging = true;
+        mobileLookVel.x = 0;
+        mobileLookVel.y = 0;
         try { lookZone.setPointerCapture(e.pointerId); } catch (_) {}
       });
       lookZone.addEventListener('pointermove', (e) => {
         if (e.pointerId !== lookState.id) return;
+        const now = performance.now();
+        const dtMs = Math.max(8, now - lookState.lastT);
         const dx = e.clientX - lookState.x;
         const dy = e.clientY - lookState.y;
         lookState.x = e.clientX;
         lookState.y = e.clientY;
-        lookDelta.x += dx * 2.2;
-        lookDelta.y += dy * 2.2;
+        lookState.lastT = now;
+        lookDelta.x += dx * LOOK_SENS;
+        lookDelta.y += dy * LOOK_SENS;
+        mobileLookVel.x = THREE.MathUtils.clamp((dx / dtMs) * 16 * LOOK_SENS, -80, 80);
+        mobileLookVel.y = THREE.MathUtils.clamp((dy / dtMs) * 16 * LOOK_SENS, -80, 80);
       });
-      lookZone.addEventListener('pointerup', (e) => {
-        if (e.pointerId === lookState.id) lookState.id = null;
-      });
-      lookZone.addEventListener('pointercancel', () => { lookState.id = null; });
+      const lookEnd = () => {
+        lookState.id = null;
+        mobileLookDragging = false;
+        mobileLookVel.x *= 0.55;
+        mobileLookVel.y *= 0.55;
+      };
+      lookZone.addEventListener('pointerup', lookEnd);
+      lookZone.addEventListener('pointercancel', lookEnd);
 
       function bindHold(btn, code) {
         if (!btn) return;
@@ -5095,8 +5336,8 @@ import * as THREE from 'three';
           try { btn.setPointerCapture(e.pointerId); } catch (_) {}
           btn.classList.add('pressed');
           keys[code] = true;
-          // Shift often comes as ShiftLeft only — mirror for warp
           if (code === 'ShiftLeft') keys.ShiftRight = true;
+          if (navigator.vibrate) try { navigator.vibrate(12); } catch (_) {}
         };
         const off = (e) => {
           e.preventDefault();
@@ -5110,15 +5351,13 @@ import * as THREE from 'three';
         btn.addEventListener('pointerup', off);
         btn.addEventListener('pointercancel', off);
         btn.addEventListener('lostpointercapture', off);
-        // Do NOT use pointerleave — Android fires it while finger still held
       }
 
       bindHold(document.getElementById('btn-up'), 'Space');
       bindHold(document.getElementById('btn-down'), 'ControlLeft');
       bindHold(document.getElementById('btn-boost'), 'ShiftLeft');
       bindHold(document.getElementById('btn-slow'), 'KeyX');
-      const btnBrake = document.getElementById('btn-brake');
-      if (btnBrake) bindHold(btnBrake, 'KeyX');
+      bindHold(document.getElementById('btn-brake'), 'KeyX');
 
       {
         const btnLook = document.getElementById('btn-look');
@@ -5133,6 +5372,7 @@ import * as THREE from 'three';
               lastLookTap = 0;
               btnLook.classList.toggle('pressed', cabinExplore);
               mobileLookHeld = cabinExplore;
+              if (navigator.vibrate) try { navigator.vibrate([10, 40, 10]); } catch (_) {}
               return;
             }
             lastLookTap = now;
@@ -5140,6 +5380,7 @@ import * as THREE from 'three';
               mobileLookHeld = true;
               btnLook.classList.add('pressed');
               if (modeEl) modeEl.textContent = 'Осмотр · 👁×2 закрепить · F — кнопка';
+              if (navigator.vibrate) try { navigator.vibrate(10); } catch (_) {}
             }
           });
           const off = () => {
@@ -5162,7 +5403,21 @@ import * as THREE from 'three';
           takeoffNormal.copy(ship.position).sub(tmpWorld).normalize();
           verticalVel = Math.max(verticalVel, SPEED_NORMAL * 0.5);
         }
+        if (navigator.vibrate) try { navigator.vibrate(18); } catch (_) {}
       });
+
+      const btnSeat = document.getElementById('btn-seat');
+      if (btnSeat) {
+        btnSeat.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof isIntroCinematic === 'function' && isIntroCinematic()) return;
+          if (mobileLookHeld && tryClickCockpitButton()) return;
+          toggleWalkInCabin();
+          if (navigator.vibrate) try { navigator.vibrate(14); } catch (_) {}
+        });
+        syncMobileSeatBtn();
+      }
 
       document.getElementById('btn-fs').addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -5177,6 +5432,18 @@ import * as THREE from 'three';
     }
 
     const velocity = new THREE.Vector3();
+
+    /** S / X / stick-back — kill speed by rate units per second (no reverse) */
+    function applySpaceBrake(dt, rate = SPEED_BRAKE) {
+      const spd = velocity.length();
+      if (spd < 1e-4) {
+        velocity.set(0, 0, 0);
+        return;
+      }
+      const next = Math.max(0, spd - rate * dt);
+      if (next < 1e-4) velocity.set(0, 0, 0);
+      else velocity.multiplyScalar(next / spd);
+    }
     const wishDir = new THREE.Vector3();
     const camRight = new THREE.Vector3();
     const camQuat = new THREE.Quaternion();
@@ -5198,11 +5465,12 @@ import * as THREE from 'three';
 
       // Soft look on surface (yaw around gravity, pitch around local right)
       if (lookDelta.x || lookDelta.y) {
-        obj.rotateOnWorldAxis(tmpNormal, -lookDelta.x * 0.0032);
+        const lookMul = (isTouch && mobilePlaying) ? 1.55 : 1;
+        obj.rotateOnWorldAxis(tmpNormal, -lookDelta.x * 0.0032 * lookMul);
         obj.getWorldDirection(camDir);
         tmpRight.crossVectors(camDir, tmpNormal).normalize();
         if (tmpRight.lengthSq() > 0.2) {
-          obj.rotateOnWorldAxis(tmpRight, -lookDelta.y * 0.0028);
+          obj.rotateOnWorldAxis(tmpRight, -lookDelta.y * 0.0028 * lookMul);
         }
         lookDelta.x = 0;
         lookDelta.y = 0;
@@ -5299,10 +5567,10 @@ import * as THREE from 'three';
         isThrusting = false;
       }
 
-      let speedCap = (keys.ShiftLeft || keys.ShiftRight) ? SPEED_BOOST : SPEED_CRUISE;
-      baseSpeed = speedCap;
+      let speedCap = SPEED_MAX;
+      baseSpeed = SPEED_MAX;
 
-      // Near planet: full cruise/boost while high; only slow when close to surface
+      // Near planet: soft safety cap only when close to surface (landing)
       if (focusedBody && takeoffCooldown <= 0 && hyper.phase !== 'travel' && hyper.phase !== 'prep') {
         focusedBody.mesh.getWorldPosition(tmpWorld);
         const R = effectiveRadius(focusedBody);
@@ -5311,13 +5579,11 @@ import * as THREE from 'three';
         const entryR = Math.max(R * 5.5, base * 10);
         if (dist < entryR) {
           const alt = Math.max(0, dist - R);
-          const boosting = !!(keys.ShiftLeft || keys.ShiftRight);
-          // 0 = high orbit (full speed), 1 = kissing the ground
+          // 0 = high orbit (full space speed), 1 = kissing the ground
           const prox = THREE.MathUtils.clamp(1 - alt / Math.max(18000, R * 0.12), 0, 1);
-          // High: full Shift 5200 / cruise 1800. Near surface: still fast descent.
-          const outer = boosting ? SPEED_BOOST : SPEED_CRUISE; // 5200 / 1800
-          const mid = boosting ? 2600 : 1400;
-          const inner = boosting ? 1100 : 700;
+          const outer = SPEED_MAX;
+          const mid = 4000;
+          const inner = 900;
           let atmoSpeed = THREE.MathUtils.lerp(outer, mid, prox * prox);
           if (prox > 0.75 || localTerrain.active) {
             atmoSpeed = THREE.MathUtils.lerp(mid, inner, THREE.MathUtils.clamp((prox - 0.75) / 0.25, 0, 1));
@@ -5325,12 +5591,10 @@ import * as THREE from 'three';
           if (localTerrain.entryHeat > 0.4) {
             atmoSpeed *= 1 - localTerrain.entryHeat * 0.08;
           }
-          // Only blend toward atmo cap when actually near the planet
-          const blend = THREE.MathUtils.smoothstep(prox, 0.05, 0.95) * 0.85;
-          speedCap = THREE.MathUtils.lerp(speedCap, atmoSpeed, blend);
-          const maxV = Math.max(atmoSpeed, speedCap * (1 - blend * 0.5)) * 1.15;
-          if (velocity.lengthSq() > maxV * maxV) {
-            velocity.setLength(maxV);
+          const blend = THREE.MathUtils.smoothstep(prox, 0.15, 0.95);
+          speedCap = THREE.MathUtils.lerp(SPEED_MAX, atmoSpeed, blend);
+          if (velocity.lengthSq() > speedCap * speedCap) {
+            velocity.setLength(speedCap);
           }
         }
       }
@@ -5346,10 +5610,24 @@ import * as THREE from 'three';
       }
 
       // ——— Attitude: seat pilot / hold Alt look + reticle / walk cabin ———
-      const MOUSE_IMPULSE = 0.0035;
-      const ROLL_ACC = 2.6;
-      const ANG_DRAG = 2.4;
-      const ANG_MAX = 2.0;
+      const onPhone = !!(isTouch && mobilePlaying);
+      // Mobile: snappier turn response + slightly higher roll
+      const MOUSE_IMPULSE = onPhone ? 0.0072 : 0.0035;
+      const ROLL_ACC = onPhone ? 3.4 : 2.6;
+      const ANG_DRAG = onPhone ? 3.2 : 2.4;
+      const ANG_MAX = onPhone ? 2.6 : 2.0;
+
+      // Swipe coast after finger lift
+      if (onPhone && !mobileLookDragging && (Math.abs(mobileLookVel.x) > 0.2 || Math.abs(mobileLookVel.y) > 0.2)) {
+        lookDelta.x += mobileLookVel.x;
+        lookDelta.y += mobileLookVel.y;
+        const damp = Math.exp(-7.5 * dt);
+        mobileLookVel.x *= damp;
+        mobileLookVel.y *= damp;
+        if (Math.abs(mobileLookVel.x) < 0.15) mobileLookVel.x = 0;
+        if (Math.abs(mobileLookVel.y) < 0.15) mobileLookVel.y = 0;
+      }
+
       const seatBusy = updateSeatAnim(dt);
       const altLook = isAltLook();
       const altHeld = !!(keys.AltLeft || keys.AltRight || mobileLookHeld);
@@ -5365,9 +5643,11 @@ import * as THREE from 'three';
         syncAltReticle();
       } else if (isWalkingInCabin) {
         // Free head look while walking
-        if (controls.isLocked) {
-          headYaw -= lookDelta.x * 0.0025;
-          headPitch -= lookDelta.y * 0.0022;
+        if (controls.isLocked || (isTouch && mobilePlaying)) {
+          const hs = (isTouch && mobilePlaying) ? 0.0036 : 0.0025;
+          const ps = (isTouch && mobilePlaying) ? 0.0032 : 0.0022;
+          headYaw -= lookDelta.x * hs;
+          headPitch -= lookDelta.y * ps;
           lookDelta.x = 0;
           lookDelta.y = 0;
         }
@@ -5384,9 +5664,11 @@ import * as THREE from 'three';
         syncCockpitVisibility();
         syncAltReticle();
       } else if (altLook) {
-        if (controls.isLocked) {
-          headYaw -= lookDelta.x * 0.0024;
-          headPitch -= lookDelta.y * 0.0022;
+        if (controls.isLocked || (isTouch && mobilePlaying)) {
+          const hs = (isTouch && mobilePlaying) ? 0.0035 : 0.0024;
+          const ps = (isTouch && mobilePlaying) ? 0.0032 : 0.0022;
+          headYaw -= lookDelta.x * hs;
+          headPitch -= lookDelta.y * ps;
           headYaw = THREE.MathUtils.clamp(headYaw, -HEAD_YAW_MAX, HEAD_YAW_MAX);
           headPitch = THREE.MathUtils.clamp(headPitch, -HEAD_PITCH_MAX, HEAD_PITCH_MAX);
           lookDelta.x = 0;
@@ -5416,7 +5698,7 @@ import * as THREE from 'three';
         syncCockpitVisibility();
         syncAltReticle();
       } else {
-        if (controls.isLocked) {
+        if (controls.isLocked || (isTouch && mobilePlaying)) {
           angVel.x += -lookDelta.y * MOUSE_IMPULSE;
           angVel.y += -lookDelta.x * MOUSE_IMPULSE;
         }
@@ -5444,9 +5726,10 @@ import * as THREE from 'three';
       }
       if (cockpitRoot?.userData.throttle) {
         const thr = cockpitRoot.userData.throttle;
-        const targetThrust = (keys.ShiftLeft || keys.ShiftRight)
-          ? -0.7
-          : (isThrusting ? -0.4 : (keys.KeyX ? 0.2 : -0.15));
+        const braking = !!(keys.KeyS || keys.KeyX);
+        const targetThrust = braking
+          ? 0.25
+          : (isThrusting ? -0.55 : -0.15);
         thr.rotation.x = THREE.MathUtils.damp(thr.rotation.x, targetThrust, 7, dt);
       }
       if (cockpitRoot?.userData.pedalL && cockpitRoot?.userData.pedalR) {
@@ -5457,10 +5740,15 @@ import * as THREE from 'three';
         pR.position.z = THREE.MathUtils.damp(pR.position.z, pR.userData.baseZ - yawInput * 0.14, 8, dt);
       }
       syncCabinLights(dt);
+      updateCabinDoors(dt);
+      updateHudGlassVisibility();
+      syncOrbitGuides();
 
+      const stickRoll = onPhone ? -mobileMove.x : mobileMove.x;
       const rollIn = (isWalkingInCabin || seatBusy || isWakeBlocking() || controlsLocked)
         ? 0
-        : ((keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0));
+        : ((keys.KeyA ? 1 : 0) - (keys.KeyD ? 1 : 0) + stickRoll
+          + (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0));
       angVel.z += rollIn * ROLL_ACC * dt;
 
       const angDamp = Math.exp(-ANG_DRAG * dt);
@@ -5501,10 +5789,11 @@ import * as THREE from 'three';
         verticalVel = 0;
         hudSpeed = 0;
       } else if (isWalkingInCabin) {
-        const walkSpeed = 1.65;
-        // Same convention as ship flight: W forward, S back, relative to look
-        const moveX = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-        const moveZ = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+        const walkSpeed = (isTouch && mobilePlaying) ? 2.05 : 1.65;
+        // W/S/A/D + phone stick (stick was missing — couldn't walk on mobile)
+        const moveX = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + mobileMove.x;
+        // Stick up (negative z) = forward, same as W
+        const moveZ = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - mobileMove.z;
         // Head looks down local −Z; match walk vectors to headYaw (YXZ)
         walkFwd.set(-Math.sin(headYaw), 0, -Math.cos(headYaw));
         walkRight.set(Math.cos(headYaw), 0, -Math.sin(headYaw));
@@ -5551,36 +5840,46 @@ import * as THREE from 'three';
 
         if (isWakeBlocking() || !isShipPowered()) {
           isThrusting = false;
-          // Engines off: only drag / residual coast (brake still works)
-          const braking = !!(keys.KeyX);
-          velocity.multiplyScalar(Math.exp(-(braking ? 4.5 : 0.85) * dt));
+          // Engines off: coast forever (no drag). S/X still kill speed.
+          applySpaceBrake(dt);
           hudSpeed = Math.round(velocity.length());
           obj.position.addScaledVector(velocity, dt);
         } else {
-          const inputX = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + mobileMove.x;
-          const inputZ = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - mobileMove.z;
           const inputY = (keys.Space ? 1 : 0) - ((keys.ControlLeft || keys.ControlRight || keys.KeyC) ? 1 : 0);
-
-          wishDir.set(0, 0, 0);
-          if (inputZ) wishDir.addScaledVector(camDir, inputZ);
-          if (inputX) wishDir.addScaledVector(camRight, inputX);
-          if (inputY) wishDir.addScaledVector(tmpForward, inputY);
-          if (wishDir.lengthSq() > 1e-8) wishDir.normalize();
-          isThrusting = wishDir.lengthSq() > 0;
-
-          const braking = !!(keys.KeyX);
-          const linDrag = braking ? 4.5 : 1.05;
-        // Soft climb on W (~200 feel → capped 500); Shift hard boost 700–900
           const boosting = !!(keys.ShiftLeft || keys.ShiftRight);
-          const thrustAcc = speedCap * (braking ? 2.0 : (boosting ? 5.6 : 3.8));
-          velocity.multiplyScalar(Math.exp(-linDrag * dt));
-          if (wishDir.lengthSq() > 0) {
-            velocity.addScaledVector(wishDir, thrustAcc * dt);
+          const stickFwd = THREE.MathUtils.clamp(-mobileMove.z, 0, 1);
+          const stickBack = THREE.MathUtils.clamp(mobileMove.z, 0, 1);
+          const thrusting = !!(keys.KeyW || boosting) || stickFwd > 0.08;
+          const hardBrake = !!(keys.KeyS || keys.KeyX);
+          const braking = hardBrake || stickBack > 0.08;
+          const thrustAmt = thrusting
+            ? Math.max(keys.KeyW || boosting ? 1 : 0, stickFwd)
+            : 0;
+          const accel = SPEED_ACCEL * (boosting ? SPEED_BOOST_MULT : 1) * Math.max(0.35, thrustAmt || 1);
+
+          isThrusting = thrusting && !braking;
+
+          // On W/Shift/stick-fwd: velocity snaps to aim (nose) — no sideways coast slide
+          if (braking) {
+            const brakeRate = hardBrake
+              ? SPEED_BRAKE
+              : SPEED_BRAKE * Math.max(0.35, stickBack);
+            applySpaceBrake(dt, brakeRate);
+          } else if (thrusting) {
+            let spd = velocity.length();
+            if (spd < SPEED_START) spd = SPEED_START;
+            else spd = Math.min(speedCap, spd + accel * dt);
+            // Ship nose = flight aim (not Alt head-look — that would push sideways)
+            camDir.set(0, 0, -1).applyQuaternion(camQuat);
+            velocity.copy(camDir).multiplyScalar(spd);
+          } else if (inputY) {
+            // Vertical nudge only while coasting (A/D = roll)
+            velocity.addScaledVector(tmpForward, SPEED_ACCEL * inputY * dt);
           }
+
           const maxCruise = speedCap;
           if (velocity.lengthSq() > maxCruise * maxCruise) {
-            velocity.multiplyScalar(Math.exp(-1.8 * dt));
-            if (velocity.length() > maxCruise) velocity.setLength(maxCruise);
+            velocity.setLength(maxCruise);
           }
 
           hudSpeed = Math.round(velocity.length());
@@ -5655,11 +5954,10 @@ import * as THREE from 'three';
       // Soft cruise buzz — quieter overall, especially near planets
       let buzzTarget = 0;
       if (flying && !inTravel && !inPrep) {
-        const spdF = THREE.MathUtils.clamp(velocity.length() / Math.max(80, SPEED_NORMAL), 0, 1.2);
-        const turnF = THREE.MathUtils.clamp(angVel.length() / 1.8, 0, 1);
-        const boost = !!(keys.ShiftLeft || keys.ShiftRight);
-        buzzTarget = 0.08 + spdF * 0.14 + turnF * 0.1 + (isThrusting ? 0.08 : 0) + (boost ? 0.06 : 0);
-        if (focusedBody) buzzTarget *= 0.35; // orbit: gentle hum, not a vibration mill
+        const spdF = THREE.MathUtils.clamp(velocity.length() / Math.max(500, SPEED_MAX * 0.15), 0, 1.2);
+        const turnF = THREE.MathUtils.clamp(angVel.length() / 1.2, 0, 1);
+        buzzTarget = 0.04 + spdF * 0.08 + turnF * 0.05 + (isThrusting ? 0.06 : 0);
+        if (focusedBody) buzzTarget *= 0.28; // orbit: gentle hum, not a vibration mill
       }
       flightBuzz = THREE.MathUtils.damp(flightBuzz, buzzTarget, 5, dt);
       if (flightBuzz < 0.008) flightBuzz = 0;
@@ -5678,7 +5976,7 @@ import * as THREE from 'three';
       warpPass.uniforms.warp.value = warpIntensity * 0.35;
       warpPass.uniforms.time.value = clock.elapsedTime;
 
-      const cruiseFovKick = flying && !inTravel ? flightBuzz * 0.9 + (isThrusting ? 0.5 : 0) : 0;
+      const cruiseFovKick = flying && !inTravel ? flightBuzz * 0.45 + (isThrusting ? 0.25 : 0) : 0;
       const targetFov = BASE_FOV + cruiseFovKick + warpIntensity * 6;
       if (Math.abs(camera.fov - targetFov) > 0.05) {
         camera.fov = THREE.MathUtils.damp(camera.fov, targetFov, 6, dt);
@@ -5694,30 +5992,30 @@ import * as THREE from 'three';
       }
 
       // Near planet: damp ALL shakes further
-      const orbitMul = focusedBody && !inTravel ? 0.28 : 1;
+      const orbitMul = focusedBody && !inTravel ? 0.22 : 1;
 
-      // Light cruise rattle — local units (camera is inside meter-scale cabin)
-      const shakeMix = Math.max(flightBuzz * 0.45, warpIntensity) * orbitMul;
-      if (shakeMix > 0.03 && flying) {
+      // Light cruise rattle — softer cabin feel
+      const shakeMix = Math.max(flightBuzz * 0.28, warpIntensity) * orbitMul;
+      if (shakeMix > 0.035 && flying) {
         const t = clock.elapsedTime;
         const w = warpIntensity * orbitMul;
         const b = flightBuzz * orbitMul;
-        const posAmp = 0.003 + b * 0.01 + w * 0.05;
+        const posAmp = 0.0016 + b * 0.005 + w * 0.035;
         warpShake.set(
-          (Math.sin(t * 39.0) * 0.5 + Math.sin(t * 15.0) * 0.3 + (Math.random() - 0.5) * 0.25) * posAmp * (0.25 + w * 0.55),
-          (Math.cos(t * 35.0) * 0.5 + Math.sin(t * 19.0) * 0.3 + (Math.random() - 0.5) * 0.25) * posAmp * (0.25 + w * 0.55),
-          (Math.sin(t * 27.0) * 0.35 + (Math.random() - 0.5) * 0.2) * posAmp * 0.3
+          (Math.sin(t * 39.0) * 0.5 + Math.sin(t * 15.0) * 0.3 + (Math.random() - 0.5) * 0.2) * posAmp * (0.2 + w * 0.5),
+          (Math.cos(t * 35.0) * 0.5 + Math.sin(t * 19.0) * 0.3 + (Math.random() - 0.5) * 0.2) * posAmp * (0.2 + w * 0.5),
+          (Math.sin(t * 27.0) * 0.35 + (Math.random() - 0.5) * 0.15) * posAmp * 0.25
         );
         camera.position.add(warpShake);
         warpShakeActive = true;
 
-        const pitchAmp = 0.0012 * b + 0.018 * w;
-        const yawAmp = 0.001 * b + 0.02 * w;
-        const rollAmp = 0.0016 * b + 0.03 * w;
+        const pitchAmp = 0.0006 * b + 0.012 * w;
+        const yawAmp = 0.0005 * b + 0.014 * w;
+        const rollAmp = 0.0008 * b + 0.02 * w;
         warpShakeEuler.set(
-          (Math.sin(t * 45.0) * 0.65 + Math.sin(t * 14.0) * 0.3 + (Math.random() - 0.5) * 0.25) * pitchAmp,
-          (Math.cos(t * 41.0) * 0.65 + Math.sin(t * 17.0) * 0.3 + (Math.random() - 0.5) * 0.25) * yawAmp,
-          (Math.sin(t * 52.0) * 0.55 + Math.cos(t * 24.0) * 0.3 + (Math.random() - 0.5) * 0.3) * rollAmp,
+          (Math.sin(t * 45.0) * 0.65 + Math.sin(t * 14.0) * 0.3 + (Math.random() - 0.5) * 0.2) * pitchAmp,
+          (Math.cos(t * 41.0) * 0.65 + Math.sin(t * 17.0) * 0.3 + (Math.random() - 0.5) * 0.2) * yawAmp,
+          (Math.sin(t * 52.0) * 0.55 + Math.cos(t * 24.0) * 0.3 + (Math.random() - 0.5) * 0.25) * rollAmp,
           'YXZ'
         );
         warpShakeQuat.setFromEuler(warpShakeEuler);
@@ -5752,13 +6050,23 @@ import * as THREE from 'three';
       const nearTarget = THREE.MathUtils.clamp(1 - (sunDist - SUN_R * 2) / (AU * 2.5), 0, 1);
       warpNearSun += (nearTarget - warpNearSun) * 0.08;
       const outer = THREE.MathUtils.clamp(sunDist / (AU * 35), 0, 1);
-      renderer.toneMappingExposure = THREE.MathUtils.lerp(1.0, 1.08, warpNearSun) - outer * 0.03;
-      // Bloom is costly — ease off while in seat cockpit (no warp)
+      renderer.toneMappingExposure = (isMobileUA ? 1.06 : 1.0)
+        + warpNearSun * (isMobileUA ? 0.1 : 0.08) - outer * 0.03;
+      // Bloom / FXAA / warp — keep phone pretty but light in the seat
       const inSeatCockpit = !!(cockpitRoot?.visible) && !isWalkingInCabin && !seatAnim && warpIntensity < 0.1;
-      bloomPass.enabled = !inSeatCockpit || warpNearSun > 0.55;
-      bloomPass.strength = (inSeatCockpit ? 0.12 : 0.24) + warpNearSun * 0.12 + warpIntensity * 0.42
-        + (hyper.phase === 'prep' ? hyperCharge * 0.08 : 0);
-      bloomPass.threshold = inSeatCockpit ? 0.992 : 0.97;
+      const wantBloom = isMobileUA
+        ? (!inSeatCockpit || warpNearSun > 0.35 || warpIntensity > 0.05)
+        : (!inSeatCockpit || warpNearSun > 0.7 || warpIntensity > 0.08);
+      bloomPass.enabled = wantBloom;
+      bloomPass.strength = wantBloom
+        ? ((isMobileUA ? (inSeatCockpit ? 0.16 : 0.34) : (inSeatCockpit ? 0.1 : 0.22))
+          + warpNearSun * 0.12 + warpIntensity * 0.4
+          + (hyper.phase === 'prep' ? hyperCharge * 0.08 : 0))
+        : 0;
+      bloomPass.threshold = inSeatCockpit ? (isMobileUA ? 0.965 : 0.995) : (isMobileUA ? 0.93 : 0.97);
+      bloomPass.radius = isMobileUA ? 0.5 : bloomPass.radius;
+      warpPass.enabled = warpIntensity > 0.01 || hyper.phase === 'travel';
+      fxaaPass.enabled = isMobileUA && warpIntensity < 0.12;
     }
 
 
@@ -5791,6 +6099,17 @@ import * as THREE from 'three';
     let ckDataCache = null;
     let ckDataAge = 0;
     const ckMapScratch = [];
+    const hudSmooth = {
+      heading: 0,
+      spd: 0,
+      lock: 0,
+      warp: 0,
+      bracketX: 0,
+      bracketY: 0,
+      bracketValid: false,
+      bracketOnGlass: false,
+      inited: false,
+    };
     const ckLook = new THREE.Vector3();
     const ckTo = new THREE.Vector3();
     const ckFlatA = new THREE.Vector3();
@@ -6347,15 +6666,69 @@ import * as THREE from 'three';
       return { u, v, onGlass, dist };
     }
 
+    function smoothHudAngle(current, target, dt, rate = 16) {
+      let diff = target - current;
+      while (diff > 180) diff -= 360;
+      while (diff < -180) diff += 360;
+      return current + diff * (1 - Math.exp(-rate * dt));
+    }
+
+    function updateHudSmooth(nav, data, dt, w, h) {
+      if (!hudSmooth.inited) {
+        hudSmooth.heading = nav.heading;
+        hudSmooth.spd = nav.spd;
+        hudSmooth.lock = THREE.MathUtils.clamp((nav.aligned + 1) * 0.5, 0, 1);
+        hudSmooth.warp = data.warp || 0;
+        hudSmooth.inited = true;
+      }
+      hudSmooth.heading = smoothHudAngle(hudSmooth.heading, nav.heading, dt, 18);
+      hudSmooth.spd = THREE.MathUtils.damp(hudSmooth.spd, nav.spd, 14, dt);
+      hudSmooth.lock = THREE.MathUtils.damp(
+        hudSmooth.lock,
+        THREE.MathUtils.clamp((nav.aligned + 1) * 0.5, 0, 1),
+        16,
+        dt
+      );
+      hudSmooth.warp = THREE.MathUtils.damp(hudSmooth.warp, data.warp || 0, 10, dt);
+
+      if (nav.target) {
+        const proj = projectPlanetOnHudGlass(nav.target);
+        if (proj) {
+          const bx = (proj.u * 0.5 + 0.5) * w;
+          const by = (-proj.v * 0.5 + 0.5) * h;
+          if (!hudSmooth.bracketValid) {
+            hudSmooth.bracketX = bx;
+            hudSmooth.bracketY = by;
+            hudSmooth.bracketValid = true;
+          } else {
+            hudSmooth.bracketX = THREE.MathUtils.damp(hudSmooth.bracketX, bx, 24, dt);
+            hudSmooth.bracketY = THREE.MathUtils.damp(hudSmooth.bracketY, by, 24, dt);
+          }
+          hudSmooth.bracketOnGlass = proj.onGlass;
+        } else {
+          hudSmooth.bracketValid = false;
+        }
+      } else {
+        hudSmooth.bracketValid = false;
+      }
+    }
+
     function paintCkHudGlass(ctx, w, h, data, t) {
       ctx.clearRect(0, 0, w, h);
       const nav = data.nav;
+      const slim = !!(typeof isMobileUA !== 'undefined' && isMobileUA);
+      const k = (w / 640) * (slim ? 0.92 : 1);
       const cx = w * 0.5;
       const cy = h * 0.48;
-      const cyan = 'rgba(80, 220, 255, 0.82)';
-      const soft = 'rgba(80, 220, 255, 0.35)';
-      const warn = 'rgba(255, 170, 70, 0.9)';
-      const ok = 'rgba(70, 255, 140, 0.9)';
+      const cyan = 'rgba(80, 220, 255, 0.92)';
+      const soft = 'rgba(80, 220, 255, 0.42)';
+      const warn = 'rgba(255, 170, 70, 0.95)';
+      const ok = 'rgba(70, 255, 140, 0.95)';
+      const lw = Math.max(0.5, (slim ? 0.55 : 0.7) * k);
+      ctx.lineWidth = lw;
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'miter';
+      ctx.globalAlpha = slim ? 0.88 : 1;
 
       // No vignette / canopy rim — clear glass except HUD marks
       // (entry heat streaks only as thin top wash, no edge oval)
@@ -6368,107 +6741,113 @@ import * as THREE from 'three';
         ctx.fillRect(0, 0, w, h * 0.14);
       }
 
-      // Heading tape
+      // Heading tape — smooth scroll (sub-degree)
+      const hdg = hudSmooth.heading;
+      const hdgScroll = (hdg - Math.round(hdg)) * 2.0 * k;
       ctx.strokeStyle = soft;
       ctx.beginPath();
-      ctx.moveTo(cx - 120, 44);
-      ctx.lineTo(cx + 120, 44);
+      ctx.moveTo(cx - 120 * k, 44 * k);
+      ctx.lineTo(cx + 120 * k, 44 * k);
       ctx.stroke();
       ctx.fillStyle = cyan;
-      ctx.font = 'bold 14px monospace';
+      ctx.font = ckFont(Math.round(15 * k), '600');
       ctx.textAlign = 'center';
-      ctx.fillText(`${nav.heading.toFixed(0).padStart(3, '0')}°`, cx, 34);
-      ctx.font = '10px monospace';
+      ctx.fillText(`${Math.round(hdg).toString().padStart(3, '0')}°`, cx, 34 * k);
+      ctx.font = ckFont(Math.round(11 * k), '500');
       for (let d = -45; d <= 45; d += 15) {
-        const hd = (nav.heading + d + 360) % 360;
-        const x = cx + d * 2.0;
-        ctx.globalAlpha = d === 0 ? 1 : 0.4;
+        const tickHdg = (Math.round(hdg) + d + 360) % 360;
+        const x = cx + d * 2.0 * k - hdgScroll;
+        ctx.globalAlpha = d === 0 ? 1 : 0.45;
         ctx.beginPath();
-        ctx.moveTo(x, 44);
-        ctx.lineTo(x, d % 30 === 0 ? 54 : 50);
+        ctx.moveTo(x, 44 * k);
+        ctx.lineTo(x, (d % 30 === 0 ? 54 : 50) * k);
         ctx.stroke();
-        if (d % 30 === 0) ctx.fillText(`${Math.round(hd)}`, x, 66);
+        if (d % 30 === 0) ctx.fillText(`${Math.round(tickHdg)}`, x, 66 * k);
       }
       ctx.globalAlpha = 1;
 
-      // Center reticle (smaller)
       ctx.strokeStyle = cyan;
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = lw;
       ctx.beginPath();
-      ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 16 * k, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(cx - 30, cy); ctx.lineTo(cx - 18, cy);
-      ctx.moveTo(cx + 18, cy); ctx.lineTo(cx + 30, cy);
-      ctx.moveTo(cx, cy - 30); ctx.lineTo(cx, cy - 18);
-      ctx.moveTo(cx, cy + 18); ctx.lineTo(cx, cy + 30);
+      ctx.moveTo(cx - 30 * k, cy); ctx.lineTo(cx - 18 * k, cy);
+      ctx.moveTo(cx + 18 * k, cy); ctx.lineTo(cx + 30 * k, cy);
+      ctx.moveTo(cx, cy - 30 * k); ctx.lineTo(cx, cy - 18 * k);
+      ctx.moveTo(cx, cy + 18 * k); ctx.lineTo(cx, cy + 30 * k);
       ctx.stroke();
       ctx.fillStyle = cyan;
-      ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+      ctx.fillRect(cx - 0.9 * k, cy - 0.9 * k, 1.8 * k, 1.8 * k);
 
-      // Target bracket — projected onto real planet position through the glass
-      if (nav.target) {
-        const lock = THREE.MathUtils.clamp((nav.aligned + 1) * 0.5, 0, 1);
-        const proj = projectPlanetOnHudGlass(nav.target);
+      // Target bracket — smoothed projection on windshield glass
+      if (nav.target && hudSmooth.bracketValid) {
+        const lock = hudSmooth.lock;
         const col = lock > 0.88 ? ok : warn;
         ctx.strokeStyle = col;
         ctx.fillStyle = col;
-        ctx.lineWidth = 1.25;
+        ctx.lineWidth = Math.max(0.5, 0.65 * k);
 
-        if (proj) {
-          let bx = (proj.u * 0.5 + 0.5) * w;
-          let by = (-proj.v * 0.5 + 0.5) * h;
-          const margin = 36;
-          const clamped = !proj.onGlass
-            || bx < margin || bx > w - margin || by < margin || by > h - margin;
-          bx = THREE.MathUtils.clamp(bx, margin, w - margin);
-          by = THREE.MathUtils.clamp(by, margin, h - margin);
+        let bx = hudSmooth.bracketX;
+        let by = hudSmooth.bracketY;
+        const margin = 36 * k;
+        const clamped = !hudSmooth.bracketOnGlass
+          || bx < margin || bx > w - margin || by < margin || by > h - margin;
+        bx = THREE.MathUtils.clamp(bx, margin, w - margin);
+        by = THREE.MathUtils.clamp(by, margin, h - margin);
 
-          if (clamped && !proj.onGlass) {
-            // Off-glass: edge caret pointing toward target
-            const ang = Math.atan2(by - cy, bx - cx);
-            const ex = cx + Math.cos(ang) * Math.min(w, h) * 0.38;
-            const ey = cy + Math.sin(ang) * Math.min(w, h) * 0.32;
-            ctx.beginPath();
-            ctx.moveTo(ex, ey);
-            ctx.lineTo(ex - Math.cos(ang) * 10 + Math.sin(ang) * 5, ey - Math.sin(ang) * 10 - Math.cos(ang) * 5);
-            ctx.lineTo(ex - Math.cos(ang) * 10 - Math.sin(ang) * 5, ey - Math.sin(ang) * 10 + Math.cos(ang) * 5);
-            ctx.closePath();
-            ctx.stroke();
-            ctx.font = 'bold 9px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(nav.name.toUpperCase(), ex, ey + 14);
-            ctx.font = '8px monospace';
-            ctx.fillText(formatNavDist(nav.dist), ex, ey + 24);
-          } else {
-            const s = 7 + (1 - lock) * 5;
-            ctx.strokeRect(bx - s, by - s, s * 2, s * 2);
-            ctx.beginPath();
-            ctx.moveTo(bx - s, by); ctx.lineTo(bx - s - 5, by);
-            ctx.moveTo(bx + s, by); ctx.lineTo(bx + s + 5, by);
-            ctx.stroke();
-            // Tiny center tick on the planet
-            ctx.beginPath();
-            ctx.moveTo(bx - 3, by); ctx.lineTo(bx + 3, by);
-            ctx.moveTo(bx, by - 3); ctx.lineTo(bx, by + 3);
-            ctx.stroke();
+        if (clamped && !hudSmooth.bracketOnGlass) {
+          const ang = Math.atan2(by - cy, bx - cx);
+          const ex = cx + Math.cos(ang) * Math.min(w, h) * 0.38;
+          const ey = cy + Math.sin(ang) * Math.min(w, h) * 0.32;
+          ctx.beginPath();
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(ex - Math.cos(ang) * 10 + Math.sin(ang) * 5, ey - Math.sin(ang) * 10 - Math.cos(ang) * 5);
+          ctx.lineTo(ex - Math.cos(ang) * 10 - Math.sin(ang) * 5, ey - Math.sin(ang) * 10 + Math.cos(ang) * 5);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.font = ckFont(Math.round(11 * k), '600');
+          ctx.textAlign = 'center';
+          ctx.fillText(nav.name.toUpperCase(), ex, ey + 14 * k);
+          ctx.font = ckFont(Math.round(10 * k), '500');
+          ctx.fillText(formatNavDist(nav.dist), ex, ey + 24 * k);
+        } else {
+          const s = (7 + (1 - lock) * 5) * k;
+          const c = 3.2 * k; // corner length — open bracket, not a fat box
+          const tick = 4 * k;
+          // Four L-corners (thinner read than full strokeRect)
+          ctx.beginPath();
+          ctx.moveTo(bx - s, by - s + c); ctx.lineTo(bx - s, by - s); ctx.lineTo(bx - s + c, by - s);
+          ctx.moveTo(bx + s - c, by - s); ctx.lineTo(bx + s, by - s); ctx.lineTo(bx + s, by - s + c);
+          ctx.moveTo(bx - s, by + s - c); ctx.lineTo(bx - s, by + s); ctx.lineTo(bx - s + c, by + s);
+          ctx.moveTo(bx + s - c, by + s); ctx.lineTo(bx + s, by + s); ctx.lineTo(bx + s, by + s - c);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(bx - s - tick, by); ctx.lineTo(bx - s, by);
+          ctx.moveTo(bx + s, by); ctx.lineTo(bx + s + tick, by);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(bx - 2.2 * k, by); ctx.lineTo(bx + 2.2 * k, by);
+          ctx.moveTo(bx, by - 2.2 * k); ctx.lineTo(bx, by + 2.2 * k);
+          ctx.stroke();
 
-            const labelX = bx + s + 6;
-            const labelY = by - 2;
-            ctx.textAlign = 'left';
-            ctx.font = 'bold 9px monospace';
-            ctx.fillText(nav.name.toUpperCase(), labelX, labelY);
-            ctx.font = '8px monospace';
-            ctx.fillText(formatNavDist(nav.dist), labelX, labelY + 10);
-            ctx.fillText(bearingLabel(nav.bearing), labelX, labelY + 20);
-          }
+          const labelX = bx + s + 6 * k;
+          const labelY = by - 2 * k;
+          ctx.textAlign = 'left';
+          ctx.font = ckFont(Math.round(11 * k), '600');
+          ctx.fillText(nav.name.toUpperCase(), labelX, labelY);
+          ctx.font = ckFont(Math.round(10 * k), '500');
+          ctx.fillText(formatNavDist(nav.dist), labelX, labelY + 10 * k);
+          ctx.fillText(bearingLabel(nav.bearing), labelX, labelY + 20 * k);
         }
       }
 
-      // Planet nicknames on the glass (replaces world sprites while in cockpit)
+      // Planet nicknames — nearest only (skip heavy loop when many bodies)
       ctx.textAlign = 'center';
+      let labelCount = 0;
       for (const b of bodies) {
         if (nav.target === b) continue;
+        if (labelCount >= 2) break;
         b.mesh.getWorldPosition(ckMapPos);
         const dist = ship.position.distanceTo(ckMapPos);
         if (dist > AU * 6) continue;
@@ -6476,117 +6855,122 @@ import * as THREE from 'three';
         if (!proj?.onGlass) continue;
         const lx = (proj.u * 0.5 + 0.5) * w;
         const ly = (-proj.v * 0.5 + 0.5) * h - 10;
-        if (lx < 40 || lx > w - 40 || ly < 50 || ly > h - 80) continue;
+        if (lx < 40 * k || lx > w - 40 * k || ly < 50 * k || ly > h - 80 * k) continue;
         const alpha = THREE.MathUtils.clamp(1.15 - dist / (AU * 5), 0.25, 0.85);
         ctx.globalAlpha = alpha;
         ctx.fillStyle = cyan;
-        ctx.font = 'bold 9px monospace';
+        ctx.font = ckFont(Math.round(11 * k), '600');
         ctx.fillText(b.data.name.toUpperCase(), lx, ly);
-        ctx.font = '7px monospace';
+        ctx.font = ckFont(Math.round(10 * k), '500');
         ctx.fillStyle = soft;
-        ctx.fillText(formatNavDist(dist), lx, ly + 10);
+        ctx.fillText(formatNavDist(dist), lx, ly + 10 * k);
+        labelCount += 1;
       }
       ctx.globalAlpha = 1;
 
       // Left telemetry
       ctx.textAlign = 'left';
       ctx.fillStyle = cyan;
-      ctx.font = 'bold 12px monospace';
-      ctx.fillText('СКОР', 28, h - 118);
-      ctx.font = 'bold 22px monospace';
-      ctx.fillText(String(nav.spd), 28, h - 92);
-      ctx.font = 'bold 12px monospace';
+      ctx.font = ckFont(Math.round(13 * k), '600');
+      ctx.fillText('СКОР', 28 * k, h - 118 * k);
+      ctx.font = ckFont(Math.round(24 * k), '600');
+      ctx.fillText(String(Math.round(hudSmooth.spd)), 28 * k, h - 92 * k);
+      ctx.font = ckFont(Math.round(13 * k), '600');
       ctx.fillStyle = (nav.inAtmo || focusedBody) ? '#9cffc0' : cyan;
-      ctx.fillText('ВЫСОТА', 28, h - 68);
-      ctx.font = 'bold 16px monospace';
+      ctx.fillText('ВЫСОТА', 28 * k, h - 68 * k);
+      ctx.font = ckFont(Math.round(17 * k), '600');
       if (nav.target || focusedBody) {
         const altBody = focusedBody || nav.target;
         const altNow = (focusedBody || nav.inAtmo)
           ? getSurfaceAltitude(altBody, ship.position)
           : nav.alt;
-        ctx.fillText(formatAltitude(altNow), 28, h - 48);
+        ctx.fillText(formatAltitude(altNow), 28 * k, h - 48 * k);
       } else {
-        ctx.fillText('—', 28, h - 48);
+        ctx.fillText('—', 28 * k, h - 48 * k);
       }
-      ctx.font = '11px monospace';
+      ctx.font = ckFont(Math.round(12 * k), '500');
       ctx.fillStyle = cyan;
-      ctx.fillText(data.thrust ? 'ТЯГА ●' : 'ДРЕЙФ ○', 28, h - 28);
-      if (data.warp > 0.12) {
+      ctx.fillText(data.thrust ? 'ТЯГА ●' : 'ДРЕЙФ ○', 28 * k, h - 28 * k);
+      if (data.warp > 0.05 || hudSmooth.warp > 0.05) {
         ctx.fillStyle = 'rgba(120,190,255,0.95)';
-        ctx.fillText(`ГИПЕР ${(data.warp * 100).toFixed(0)}%`, 28, h - 12);
+        ctx.fillText(`ГИПЕР ${(hudSmooth.warp * 100).toFixed(0)}%`, 28 * k, h - 12 * k);
       }
 
       // Right targeting block
       ctx.textAlign = 'right';
       ctx.fillStyle = cyan;
-      ctx.font = 'bold 12px monospace';
-      ctx.fillText('ЦЕЛЬ', w - 28, h - 96);
-      ctx.font = 'bold 15px monospace';
-      ctx.fillText(nav.target ? nav.name.toUpperCase() : '—', w - 28, h - 72);
-      ctx.font = '11px monospace';
+      ctx.font = ckFont(Math.round(13 * k), '600');
+      ctx.fillText('ЦЕЛЬ', w - 28 * k, h - 96 * k);
+      ctx.font = ckFont(Math.round(16 * k), '600');
+      ctx.fillText(nav.target ? nav.name.toUpperCase() : '—', w - 28 * k, h - 72 * k);
+      ctx.font = ckFont(Math.round(12 * k), '500');
       if (nav.target) {
-        ctx.fillText(`ДИСТ ${formatNavDist(nav.dist)}`, w - 28, h - 52);
-        ctx.fillText(`ВЫС  ${formatAltitude(nav.alt)}`, w - 28, h - 36);
-        ctx.fillStyle = nav.aligned > 0.88 ? ok : soft;
-        ctx.fillText(nav.aligned > 0.88 ? '● ЗАХВАТ' : '○ НАВЕДЕНИЕ', w - 28, h - 18);
+        ctx.fillText(`ДИСТ ${formatNavDist(nav.dist)}`, w - 28 * k, h - 52 * k);
+        ctx.fillText(`ВЫС  ${formatAltitude(nav.alt)}`, w - 28 * k, h - 36 * k);
+        ctx.fillStyle = hudSmooth.lock > 0.88 ? ok : soft;
+        ctx.fillText(hudSmooth.lock > 0.88 ? '● ЗАХВАТ' : '○ НАВЕДЕНИЕ', w - 28 * k, h - 18 * k);
       } else {
-        ctx.fillText('ПОИСК…', w - 28, h - 52);
+        ctx.fillText('ПОИСК…', w - 28 * k, h - 52 * k);
       }
 
-      // Mini radar bottom-center
-      const rx = cx;
-      const ry = h - 58;
-      const rr = 36;
-      ctx.strokeStyle = soft;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(rx, ry, rr, 0, Math.PI * 2);
-      ctx.stroke();
-      const sweep = (t * 2.1) % (Math.PI * 2);
-      ctx.strokeStyle = 'rgba(80,220,255,0.55)';
-      ctx.beginPath();
-      ctx.moveTo(rx, ry);
-      ctx.lineTo(rx + Math.cos(sweep) * rr, ry + Math.sin(sweep) * rr);
-      ctx.stroke();
-      for (let i = 0, n = Math.min(5, data.nearest.length); i < n; i++) {
-        const p = data.nearest[i];
-        const rel = Math.min(p.dist / (AU * 3.5), 1);
-        const ang = Math.atan2(p.z - data.shipZ, p.x - data.shipX);
-        const pr = rel * rr * 0.9;
-        ctx.fillStyle = p.isTarget ? warn : cyan;
+      // Mini radar bottom-center (skip on phone — less clutter)
+      if (!slim) {
+        const rx = cx;
+        const ry = h - 58 * k;
+        const rr = 36 * k;
+        ctx.strokeStyle = soft;
+        ctx.lineWidth = lw;
         ctx.beginPath();
-        ctx.arc(rx + Math.cos(ang) * pr, ry + Math.sin(ang) * pr, p.isTarget ? 2.5 : 1.6, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(rx, ry, rr, 0, Math.PI * 2);
+        ctx.stroke();
+        const sweep = (t * 2.1) % (Math.PI * 2);
+        ctx.strokeStyle = 'rgba(80,220,255,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(rx, ry);
+        ctx.lineTo(rx + Math.cos(sweep) * rr, ry + Math.sin(sweep) * rr);
+        ctx.stroke();
+        for (let i = 0, n = Math.min(5, data.nearest.length); i < n; i++) {
+          const p = data.nearest[i];
+          const rel = Math.min(p.dist / (AU * 3.5), 1);
+          const ang = Math.atan2(p.z - data.shipZ, p.x - data.shipX);
+          const pr = rel * rr * 0.9;
+          ctx.fillStyle = p.isTarget ? warn : cyan;
+          ctx.beginPath();
+          ctx.arc(rx + Math.cos(ang) * pr, ry + Math.sin(ang) * pr, (p.isTarget ? 2.5 : 1.6) * k, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = soft;
+        ctx.font = ckFont(Math.round(11 * k), '600');
+        ctx.textAlign = 'center';
+        ctx.fillText('РЛС', rx, ry + rr + 12 * k);
       }
-      ctx.fillStyle = soft;
-      ctx.font = '9px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('РЛС', rx, ry + rr + 12);
 
       // Top status
       ctx.textAlign = 'left';
       ctx.fillStyle = soft;
-      ctx.font = '10px monospace';
-      ctx.fillText(`SUN ${formatNavDist(data.sunDist)}`, 28, 22);
+      ctx.font = ckFont(Math.round(12 * k), '600');
+      ctx.fillText(`SUN ${formatNavDist(data.sunDist)}`, 28 * k, 22 * k);
       ctx.textAlign = 'right';
-      let rightTag = data.warp > 0.12 ? 'WARP' : 'CRUISE';
+      let rightTag = hudSmooth.warp > 0.12 ? 'WARP' : 'CRUISE';
       if (hyper.phase === 'align') rightTag = 'ALIGN';
       else if (hyper.phase === 'prep') rightTag = 'PREP';
       else if (navTablet.selected) rightTag = `NAV · ${navTablet.selected.data.name.slice(0, 8)}`;
-      ctx.fillText(rightTag, w - 28, 22);
+      ctx.fillText(rightTag, w - 28 * k, 22 * k);
 
       // Bottom cue
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(120, 200, 255, 0.55)';
-      ctx.font = '10px monospace';
-      ctx.fillText('M / NAV — карта и варп к орбите', cx, h - 18);
+      if (!slim) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(120, 200, 255, 0.65)';
+        ctx.font = ckFont(Math.round(12 * k), '600');
+        ctx.fillText('M / NAV — карта и варп к орбите', cx, h - 18 * k);
+      }
+      ctx.globalAlpha = 1;
     }
 
     function paintOneCockpitScreen(scr, data, t) {
       const ctx = scr.ctx;
       if (!ctx) return;
-      const w = scr.canvas.width;
-      const h = scr.canvas.height;
+      const { w, h } = ckScreenSize(scr);
       const nav = data.nav;
 
       switch (scr.role) {
@@ -6634,6 +7018,31 @@ import * as THREE from 'three';
       scr._sig = scr._pendingSig;
     }
 
+    /** HUD fingerprint — uses smoothed values; avoids full-GPU upload every frame */
+    function hudGlassSig(data, t) {
+      const nav = data.nav;
+      const atmoSig = atmoFx.active
+        ? `${Math.round(atmoFx.depth * 12)}|${Math.round(atmoFx.heat * 12)}`
+        : '0';
+      return [
+        nav.name,
+        Math.round(hudSmooth.heading * 20) / 20,
+        Math.round(hudSmooth.spd),
+        Math.round(hudSmooth.bracketX),
+        Math.round(hudSmooth.bracketY),
+        hudSmooth.bracketValid ? 1 : 0,
+        Math.round(hudSmooth.lock * 40) / 40,
+        Math.round(hudSmooth.warp * 60) / 60,
+        Math.floor(t * 30),
+        data.thrust ? 1 : 0,
+        Math.round(data.shipX / (AU * 0.03)),
+        Math.round(data.shipZ / (AU * 0.03)),
+        hyper.phase || '',
+        atmoSig,
+        wake?.phase || '',
+      ].join('|');
+    }
+
     /** Stable fingerprint — only reupload GPU when nav/map state actually moves */
     function cockpitScreenSig(role, data, t) {
       const nav = data.nav;
@@ -6647,27 +7056,28 @@ import * as THREE from 'three';
       if (role === 'briefing') {
         return `b|${nav.name}|${Math.round(nav.dist / Math.max(1, EARTH_R))}|${nav.bearing.toFixed(0)}|${nav.spd}|${nav.inAtmo ? 1 : 0}|${data.thrust ? 1 : 0}|${pulse}`;
       }
-      // hudGlass — denser updates for pitch/bearing feel, still quantized
-      const atmoSig = atmoFx.active
-        ? `${Math.round(atmoFx.depth * 20)}|${Math.round(atmoFx.heat * 20)}`
-        : '0';
-      return `h|${nav.name}|${nav.bearing.toFixed(0)}|${nav.elev.toFixed(0)}|${nav.spd}|${Math.round(nav.aligned * 12)}|${data.warp > 0.12 ? 1 : 0}|${hyper.phase || ''}|${navTablet.selected?.data?.name || ''}|${atmoSig}|${Math.floor(t * 2)}|${wake?.phase || ''}|${Math.floor((wake?.age || 0) * 8)}`;
+      return hudGlassSig(data, t);
     }
 
-    /** Paint + upload only when screen signature changes */
-    function paintCockpitScreens(t) {
+    /** Paint cockpit screens — HUD: smooth every frame, upload ~28 Hz max */
+    function paintCockpitScreens(t, dt = 1 / 60) {
       if (!ckScreens.length || document.body.classList.contains('landed') || !cockpitRoot?.visible) return;
 
       // Power dead → blank glass / hide consoles (no further canvas work)
       if (!isShipPowered()) {
+        hudSmooth.inited = false;
+        hudSmooth.bracketValid = false;
         const glass = cockpitRoot.userData.hudGlass;
         if (glass) glass.visible = false;
         for (const scr of ckScreens) {
           if (scr.role === 'hudGlass') continue;
           if (scr.panel) scr.panel.visible = false;
           if (scr.ctx && !scr._poweredOff) {
+            scr.ctx.save();
+            scr.ctx.setTransform(1, 0, 0, 1, 0, 0);
             scr.ctx.fillStyle = '#000006';
             scr.ctx.fillRect(0, 0, scr.canvas.width, scr.canvas.height);
+            scr.ctx.restore();
             scr.tex.needsUpdate = true;
             scr._poweredOff = true;
             scr._sig = '';
@@ -6676,9 +7086,9 @@ import * as THREE from 'three';
         return;
       }
 
+      const hudActive = shouldShowHudGlass();
       ckRound += 1;
-      // Refresh nav data modestly (cheap); GPU upload only on dirty screens
-      if (!ckDataCache || (ckRound & 3) === 0) {
+      if (hudActive || !ckDataCache || (ckRound & 3) === 0) {
         getCockpitData();
       }
       const data = ckDataCache;
@@ -6687,10 +7097,20 @@ import * as THREE from 'three';
       for (const scr of ckScreens) {
         scr._poweredOff = false;
         if (scr.role === 'hudGlass') {
-          if (document.body.classList.contains('hud-hidden')) continue;
-        } else if (scr.panel) {
-          scr.panel.visible = true;
+          if (!hudActive) {
+            hudSmooth.bracketValid = false;
+            continue;
+          }
+          const { w: ckW, h: ckH } = ckScreenSize(scr);
+          updateHudSmooth(data.nav, data, dt, ckW, ckH);
+          // Full-rate HUD paint (smooth). Quality is low-DPI — not Hz.
+          const sig = hudGlassSig(data, t);
+          if (sig === scr._sig) continue;
+          scr._pendingSig = sig;
+          paintOneCockpitScreen(scr, data, t);
+          continue;
         }
+        if (scr.panel) scr.panel.visible = true;
         const sig = cockpitScreenSig(scr.role, data, t);
         if (sig === scr._sig) continue;
         scr._pendingSig = sig;
@@ -6743,7 +7163,7 @@ import * as THREE from 'three';
       if (sunMat) sunMat.uniforms.time.value = t;
       const simDt = dt * timeScale;
 
-      paintCockpitScreens(t);
+      paintCockpitScreens(t, dt);
       if (navTablet.open) paintNavTablet();
 
       sunMesh.rotation.y += simDt * 0.04;

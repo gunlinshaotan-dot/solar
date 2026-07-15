@@ -1,5 +1,5 @@
 /* Solar Nemesis — full asset cache (Pages + local) */
-const CACHE = 'solar-nemesis-v26';
+const CACHE = 'solar-nemesis-v47';
 const CDN_CACHE = 'solar-cdn-v4';
 
 const PRECACHE = [
